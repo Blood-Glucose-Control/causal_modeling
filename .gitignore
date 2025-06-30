@@ -7,3 +7,13 @@ temp.ipynb
 # Python
 \venv
 \causalimpact_env
+
+
+# model-CRN
+model-CRN/crn_env/
+model-CRN/results/
+model-CRN/figures/
+model-CRN/__pycache__/
+model-CRN/utils/__pycache__/
+*.pyc
+*.ckpt*
