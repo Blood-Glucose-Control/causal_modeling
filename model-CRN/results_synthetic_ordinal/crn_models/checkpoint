@@ -1,0 +1,2 @@
+model_checkpoint_path: "encoder_crn_ordinal_synthetic_final.ckpt"
+all_model_checkpoint_paths: "encoder_crn_ordinal_synthetic_final.ckpt"

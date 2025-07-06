@@ -95,6 +95,24 @@ class CRN_Model:
         treatment_prob_predictions = tf.nn.softmax(treatment_logit_predictions)
 
         return treatment_prob_predictions
+    
+    def build_treatment_assignments_ordinal(self, balancing_representation):
+        """Build treatment assignments for ordinal (continuous) dosage levels using MSE regression."""
+        balancing_representation_gr = flip_gradient(balancing_representation, self.alpha)
+
+        # Custom dense layers for ordinal treatment prediction
+        with tf.compat.v1.variable_scope("treatment_hidden_ordinal"):
+            W1 = tf.compat.v1.get_variable("weights", [self.br_size, self.fc_hidden_units])
+            b1 = tf.compat.v1.get_variable("bias", [self.fc_hidden_units])
+            treatments_network_layer = tf.nn.elu(tf.matmul(balancing_representation_gr, W1) + b1)
+            
+        with tf.compat.v1.variable_scope("treatment_output_ordinal"):
+            # Output single continuous value for dosage level
+            W2 = tf.compat.v1.get_variable("weights", [self.fc_hidden_units, 1])
+            b2 = tf.compat.v1.get_variable("bias", [1])
+            treatment_dosage_predictions = tf.matmul(treatments_network_layer, W2) + b2
+        
+        return treatment_dosage_predictions
 
     def build_outcomes(self, balancing_representation,):
         current_treatments_reshape = tf.reshape(self.current_treatments, [-1, self.num_treatments])
@@ -113,15 +131,42 @@ class CRN_Model:
             outcome_predictions = tf.matmul(outcome_network_layer, W2) + b2
 
         return outcome_predictions
+    
+    def build_outcomes_ordinal(self, balancing_representation):
+        """Build outcomes for ordinal treatment encoding."""
+        current_treatments_reshape = tf.reshape(self.current_treatments, [-1, 1])  # Single dosage value
 
-    def train(self, dataset_train, dataset_val, model_name, model_folder):
+        outcome_network_input = tf.concat([balancing_representation, current_treatments_reshape], axis=-1)
+        # Custom dense layers for outcome prediction with ordinal treatment
+        input_size = self.br_size + 1  # Single dosage input
+        with tf.compat.v1.variable_scope("outcome_hidden_ordinal"):
+            W1 = tf.compat.v1.get_variable("weights", [input_size, self.fc_hidden_units])
+            b1 = tf.compat.v1.get_variable("bias", [self.fc_hidden_units])
+            outcome_network_layer = tf.nn.elu(tf.matmul(outcome_network_input, W1) + b1)
+            
+        with tf.compat.v1.variable_scope("outcome_output_ordinal"):
+            W2 = tf.compat.v1.get_variable("weights", [self.fc_hidden_units, self.num_outputs])
+            b2 = tf.compat.v1.get_variable("bias", [self.num_outputs])
+            outcome_predictions = tf.matmul(outcome_network_layer, W2) + b2
+
+        return outcome_predictions
+
+    def train(self, dataset_train, dataset_val, model_name, model_folder, ordinal_treatments=False):
         self.balancing_representation = self.build_balancing_representation()
-        self.treatment_prob_predictions = self.build_treatment_assignments_one_hot(self.balancing_representation)
-        self.predictions = self.build_outcomes(self.balancing_representation)
-
-        self.loss_treatments = self.compute_loss_treatments_one_hot(target_treatments=self.current_treatments,
-                                                                    treatment_predictions=self.treatment_prob_predictions,
-                                                                    active_entries=self.active_entries)
+        
+        if ordinal_treatments:
+            self.treatment_predictions = self.build_treatment_assignments_ordinal(self.balancing_representation)
+            self.predictions = self.build_outcomes_ordinal(self.balancing_representation)
+            self.loss_treatments = self.compute_loss_treatments_ordinal(target_treatments=self.current_treatments,
+                                                                        treatment_predictions=self.treatment_predictions,
+                                                                        active_entries=self.active_entries)
+        else:
+            self.treatment_prob_predictions = self.build_treatment_assignments_one_hot(self.balancing_representation)
+            self.predictions = self.build_outcomes(self.balancing_representation)
+            self.loss_treatments = self.compute_loss_treatments_one_hot(target_treatments=self.current_treatments,
+                                                                        treatment_predictions=self.treatment_prob_predictions,
+                                                                        active_entries=self.active_entries)
+        
         self.loss_outcomes = self.compute_loss_predictions(self.outputs, self.predictions, self.active_entries)
         self.loss = self.loss_outcomes + self.loss_treatments
         optimizer = self.get_optimizer()
@@ -175,10 +220,15 @@ class CRN_Model:
         checkpoint_name = model_name + "_final"
         self.save_network(self.sess, model_folder, checkpoint_name)
 
-    def load_model(self, model_name, model_folder):
+    def load_model(self, model_name, model_folder, ordinal_treatments=False):
         self.balancing_representation = self.build_balancing_representation()
-        self.treatment_prob_predictions = self.build_treatment_assignments_one_hot(self.balancing_representation)
-        self.predictions = self.build_outcomes(self.balancing_representation)
+        
+        if ordinal_treatments:
+            self.treatment_predictions = self.build_treatment_assignments_ordinal(self.balancing_representation)
+            self.predictions = self.build_outcomes_ordinal(self.balancing_representation)
+        else:
+            self.treatment_prob_predictions = self.build_treatment_assignments_one_hot(self.balancing_representation)
+            self.predictions = self.build_outcomes(self.balancing_representation)
 
         tf_device = 'gpu'
         if tf_device == "cpu":
@@ -435,6 +485,16 @@ class CRN_Model:
             (- target_treatments * tf.math.log(treatment_predictions + 1e-8)) * active_entries) \
                              / tf.reduce_sum(active_entries)
         return cross_entropy_loss
+    
+    def compute_loss_treatments_ordinal(self, target_treatments, treatment_predictions, active_entries):
+        """Compute MSE loss for ordinal treatment predictions."""
+        treatment_predictions = tf.reshape(treatment_predictions, [-1, self.max_sequence_length, 1])
+        target_treatments_ordinal = tf.reshape(target_treatments, [-1, self.max_sequence_length, 1])
+        
+        # MSE loss for continuous dosage predictions
+        mse_loss = tf.reduce_sum(tf.square(target_treatments_ordinal - treatment_predictions) * active_entries) \
+                   / tf.reduce_sum(active_entries)
+        return mse_loss
 
     def compute_loss_predictions(self, outputs, predictions, active_entries):
         predictions = tf.reshape(predictions, [-1, self.max_sequence_length, self.num_outputs])

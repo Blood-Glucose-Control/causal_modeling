@@ -19,7 +19,7 @@ def append_results_to_file(filename, data):
         pickle.dump(data, handle, protocol=2)
 
 
-def load_trained_model(dataset_test, hyperparams_file, model_name, model_folder, b_decoder_model=False):
+def load_trained_model(dataset_test, hyperparams_file, model_name, model_folder, b_decoder_model=False, ordinal_treatments=False):
     _, length, num_covariates = dataset_test['current_covariates'].shape
     num_treatments = dataset_test['current_treatments'].shape[-1]
     num_outputs = dataset_test['outputs'].shape[-1]
@@ -38,14 +38,19 @@ def load_trained_model(dataset_test, hyperparams_file, model_name, model_folder,
     if (b_decoder_model):
         model = CRN_Model(params, best_hyperparams, b_train_decoder=True)
 
-    model.load_model(model_name=model_name, model_folder=model_folder)
+    model.load_model(model_name=model_name, model_folder=model_folder, ordinal_treatments=ordinal_treatments)
     return model
 
 
-def get_processed_data(raw_sim_data, scaling_params):
+def get_processed_data(raw_sim_data, scaling_params, ordinal_treatments=False):
     """
     Create formatted data to train both encoder and seq2seq architecture for glucose data.
     Follows the exact same pattern as cancer evaluation_utils.py
+    
+    Args:
+        raw_sim_data: Raw simulation data
+        scaling_params: Scaling parameters (mean, std)
+        ordinal_treatments: If True, use ordinal (continuous) treatment encoding instead of one-hot
     """
     mean, std = scaling_params
 
@@ -75,29 +80,42 @@ def get_processed_data(raw_sim_data, scaling_params):
     # Outputs: next timestep glucose (following cancer pattern)
     outputs = glucose_normalized[:, horizon:, np.newaxis]
     
-    # Treatments: Convert insulin to binary application + dosage
+    # Treatments: Handle ordinal vs one-hot encoding
     insulin_dosage = raw_sim_data['current_treatments'][:, :, 0]
     insulin_application = (insulin_dosage > 0).astype(float)
     
     # Normalize insulin dosage
     insulin_dosage_norm = (insulin_dosage - mean['insulin']) / std['insulin']
     
-    # Create treatment combinations (no insulin, insulin) - 2 categories instead of 4
-    treatments = np.zeros((num_patients, original_length - offset, 2))
-    for patient_id in range(num_patients):
-        for timestep in range(original_length - offset):
-            if insulin_application[patient_id, timestep] == 0:
-                treatments[patient_id, timestep] = [1, 0]  # no insulin
-            else:
-                treatments[patient_id, timestep] = [0, 1]  # insulin given
-    
-    # Previous treatments (shifted by 1)
-    previous_treatments = treatments[:, :-1, :]
-    current_treatments = treatments
-    
-    # Set up input/output scaling
-    input_means = np.array([mean['glucose'], mean['glucose_history'], 0, 0])  # 2 covariates + 2 treatments
-    input_stds = np.array([std['glucose'], std['glucose_history'], 1, 1])    # binary treatments have std=1
+    if ordinal_treatments:
+        # Ordinal encoding: Use normalized dosage values directly
+        current_treatments = insulin_dosage_norm[:, :original_length - offset, np.newaxis]
+        previous_treatments = insulin_dosage_norm[:, :original_length - offset - 1, np.newaxis]
+        
+        # Set up input/output scaling for ordinal treatments
+        input_means = np.array([mean['glucose'], mean['glucose_history'], mean['insulin']])  # 2 covariates + 1 treatment
+        input_stds = np.array([std['glucose'], std['glucose_history'], std['insulin']])      # normalized dosage
+        
+        num_treatments = 1  # Single continuous dosage value
+    else:
+        # One-hot encoding: Create treatment combinations (no insulin, insulin) - 2 categories instead of 4
+        treatments = np.zeros((num_patients, original_length - offset, 2))
+        for patient_id in range(num_patients):
+            for timestep in range(original_length - offset):
+                if insulin_application[patient_id, timestep] == 0:
+                    treatments[patient_id, timestep] = [1, 0]  # no insulin
+                else:
+                    treatments[patient_id, timestep] = [0, 1]  # insulin given
+        
+        # Previous treatments (shifted by 1)
+        previous_treatments = treatments[:, :-1, :]
+        current_treatments = treatments
+        
+        # Set up input/output scaling for one-hot treatments
+        input_means = np.array([mean['glucose'], mean['glucose_history'], 0, 0])  # 2 covariates + 2 treatments
+        input_stds = np.array([std['glucose'], std['glucose_history'], 1, 1])    # binary treatments have std=1
+        
+        num_treatments = 2  # Two categories: no insulin, insulin
     
     output_means = mean['glucose']
     output_stds = std['glucose']
@@ -122,7 +140,8 @@ def get_processed_data(raw_sim_data, scaling_params):
         'input_means': input_means,
         'input_stds': input_stds,
         'output_means': output_means,
-        'output_stds': output_stds
+        'output_stds': output_stds,
+        'num_treatments': num_treatments
     }
 
     return processed_data

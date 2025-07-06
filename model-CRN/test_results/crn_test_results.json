@@ -1,0 +1,170 @@
+{
+  "dose_response": {
+    "conservative_dosing": {
+      "ordinal": {
+        "rmse": 1.9869863676586812,
+        "mae": 1.583436238386311,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": 0.00026328514549836345,
+        "mean_predicted_glucose": -0.0023777429940154563
+      },
+      "onehot": {
+        "rmse": 1.9903400945465797,
+        "mae": 1.5847261100517638,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": 0.00026328514549836345,
+        "mean_predicted_glucose": -0.008044522704487833
+      }
+    },
+    "standard_dosing": {
+      "ordinal": {
+        "rmse": 1.9851223611234503,
+        "mae": 1.5903732592936832,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": 9.021625908463422e-05,
+        "mean_predicted_glucose": -0.01884016591094465
+      },
+      "onehot": {
+        "rmse": 1.981986600385373,
+        "mae": 1.5778480687734753,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": 9.021625908463422e-05,
+        "mean_predicted_glucose": 0.027283262239918754
+      }
+    },
+    "aggressive_dosing": {
+      "ordinal": {
+        "rmse": 1.9809379480379097,
+        "mae": 1.5847556738835833,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": -0.00024837276079855763,
+        "mean_predicted_glucose": 0.006938670381835793
+      },
+      "onehot": {
+        "rmse": 2.0137870224758787,
+        "mae": 1.6118171353861532,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": -0.00024837276079855763,
+        "mean_predicted_glucose": 0.016449623531950903
+      }
+    }
+  },
+  "patient_sensitivity": {
+    "insulin_resistant": {
+      "ordinal": {
+        "rmse": 1.9856205450678417,
+        "mae": 1.5867374294434928,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": 0.0003096638313710623,
+        "mean_predicted_glucose": -0.015511740623175731
+      },
+      "onehot": {
+        "rmse": 2.012376029940898,
+        "mae": 1.6026722207036732,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": 0.0003096638313710623,
+        "mean_predicted_glucose": 0.02266798767010129
+      }
+    },
+    "normal_sensitivity": {
+      "ordinal": {
+        "rmse": 2.004081207597525,
+        "mae": 1.598039648771748,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": -5.207774240521213e-05,
+        "mean_predicted_glucose": -0.03126470800493551
+      },
+      "onehot": {
+        "rmse": 2.0031921302572533,
+        "mae": 1.599369414763271,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": -5.207774240521213e-05,
+        "mean_predicted_glucose": 0.0025341646445462144
+      }
+    },
+    "highly_sensitive": {
+      "ordinal": {
+        "rmse": 2.002997960349862,
+        "mae": 1.5991709335457727,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": -0.0006053844819416369,
+        "mean_predicted_glucose": 0.0016204756194501124
+      },
+      "onehot": {
+        "rmse": 2.0111817641765275,
+        "mae": 1.6034799965531819,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": -0.0006053844819416369,
+        "mean_predicted_glucose": -0.008915317481505246
+      }
+    }
+  },
+  "timing_control": {
+    "tight_control": {
+      "ordinal": {
+        "rmse": 2.003989555858703,
+        "mae": 1.602101288767918,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": -6.253726171955217e-05,
+        "mean_predicted_glucose": 0.0015516170721823989
+      },
+      "onehot": {
+        "rmse": 2.0148472225380427,
+        "mae": 1.604304438747501,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": -6.253726171955217e-05,
+        "mean_predicted_glucose": 0.01756794776375052
+      }
+    },
+    "variable_control": {
+      "ordinal": {
+        "rmse": 2.004854023619911,
+        "mae": 1.6017349835696437,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": -0.00019033115077193624,
+        "mean_predicted_glucose": 0.027231327652299554
+      },
+      "onehot": {
+        "rmse": 2.0126134710161074,
+        "mae": 1.6025578326476912,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": -0.00019033115077193624,
+        "mean_predicted_glucose": 0.0010508969306518641
+      }
+    },
+    "poor_control": {
+      "ordinal": {
+        "rmse": 1.9996129752336633,
+        "mae": 1.5997274317722268,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": 0.00022915990857567218,
+        "mean_predicted_glucose": 0.0035736379712678333
+      },
+      "onehot": {
+        "rmse": 2.0073738933408056,
+        "mae": 1.5995927431644235,
+        "range_accuracy": 1.0,
+        "n_points": 15960,
+        "mean_actual_glucose": 0.00022915990857567218,
+        "mean_predicted_glucose": -0.019488786371258802
+      }
+    }
+  }
+}

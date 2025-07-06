@@ -10,7 +10,7 @@ from utils.glucose_evaluation_utils import write_results_to_file, load_trained_m
 
 
 def fit_CRN_encoder_glucose(dataset_train, dataset_val, model_name, model_dir, hyperparams_file,
-                           b_hyperparam_opt):
+                           b_hyperparam_opt, ordinal_treatments=False):
     _, length, num_covariates = dataset_train['current_covariates'].shape
     num_treatments = dataset_train['current_treatments'].shape[-1]
     num_outputs = dataset_train['outputs'].shape[-1]
@@ -40,7 +40,7 @@ def fit_CRN_encoder_glucose(dataset_train, dataset_val, model_name, model_dir, h
 
             logging.info("Current hyperparams used for training \n {}".format(hyperparams))
             model = CRN_Model(params, hyperparams)
-            model.train(dataset_train, dataset_val, model_name, model_dir)
+            model.train(dataset_train, dataset_val, model_name, model_dir, ordinal_treatments=ordinal_treatments)
             validation_mse, _ = model.evaluate_predictions(dataset_val)
 
             if (validation_mse < best_validation_mse):
@@ -66,13 +66,13 @@ def fit_CRN_encoder_glucose(dataset_train, dataset_val, model_name, model_dir, h
         
         logging.info("Using default hyperparams: {}".format(hyperparams))
         model = CRN_Model(params, hyperparams)
-        model.train(dataset_train, dataset_val, model_name, model_dir)
+        model.train(dataset_train, dataset_val, model_name, model_dir, ordinal_treatments=ordinal_treatments)
 
     return best_hyperparams
 
 
 def test_CRN_encoder_glucose(pickle_map, models_dir, encoder_model_name, encoder_hyperparams_file,
-                            b_encoder_hyperparm_tuning):
+                            b_encoder_hyperparm_tuning, ordinal_treatments=False):
 
     logging.info("Fitting encoder")
     
@@ -81,16 +81,16 @@ def test_CRN_encoder_glucose(pickle_map, models_dir, encoder_model_name, encoder
     test_data = pickle_map['test_data']
     scaling_data = pickle_map['scaling_data']
 
-    training_processed = get_processed_data(training_data, scaling_data)
-    validation_processed = get_processed_data(validation_data, scaling_data)
-    test_processed = get_processed_data(test_data, scaling_data)
+    training_processed = get_processed_data(training_data, scaling_data, ordinal_treatments=ordinal_treatments)
+    validation_processed = get_processed_data(validation_data, scaling_data, ordinal_treatments=ordinal_treatments)
+    test_processed = get_processed_data(test_data, scaling_data, ordinal_treatments=ordinal_treatments)
 
     # Train the encoder
     fit_CRN_encoder_glucose(training_processed, validation_processed, encoder_model_name, models_dir,
-                           encoder_hyperparams_file, b_encoder_hyperparm_tuning)
+                           encoder_hyperparams_file, b_encoder_hyperparm_tuning, ordinal_treatments=ordinal_treatments)
 
     # Load and evaluate the trained model
-    model = load_trained_model(test_processed, encoder_hyperparams_file, encoder_model_name, models_dir)
+    model = load_trained_model(test_processed, encoder_hyperparams_file, encoder_model_name, models_dir, ordinal_treatments=ordinal_treatments)
     test_rmse, _ = model.evaluate_predictions(test_processed)
 
     logging.info("Test RMSE for encoder: {}".format(test_rmse))
@@ -99,7 +99,7 @@ def test_CRN_encoder_glucose(pickle_map, models_dir, encoder_model_name, encoder
 
 def test_CRN_decoder_glucose(pickle_map, max_projection_horizon, projection_horizon,
                             models_dir, encoder_model_name, encoder_hyperparams_file,
-                            decoder_model_name, decoder_hyperparams_file, b_decoder_hyperparm_tuning):
+                            decoder_model_name, decoder_hyperparams_file, b_decoder_hyperparm_tuning, ordinal_treatments=False):
 
     logging.info("Fitting decoder")
     
@@ -108,9 +108,9 @@ def test_CRN_decoder_glucose(pickle_map, max_projection_horizon, projection_hori
     test_data = pickle_map['test_data']
     scaling_data = pickle_map['scaling_data']
 
-    training_processed = get_processed_data(training_data, scaling_data)
-    validation_processed = get_processed_data(validation_data, scaling_data)
-    test_processed = get_processed_data(test_data, scaling_data)
+    training_processed = get_processed_data(training_data, scaling_data, ordinal_treatments=ordinal_treatments)
+    validation_processed = get_processed_data(validation_data, scaling_data, ordinal_treatments=ordinal_treatments)
+    test_processed = get_processed_data(test_data, scaling_data, ordinal_treatments=ordinal_treatments)
 
     # For simplicity, use same hyperparams as encoder for decoder
     # In a full implementation, you'd want separate decoder hyperparameter optimization
@@ -122,7 +122,7 @@ def test_CRN_decoder_glucose(pickle_map, max_projection_horizon, projection_hori
         write_results_to_file(decoder_hyperparams_file, encoder_hyperparams)
 
     # Load encoder and decoder models
-    encoder_model = load_trained_model(test_processed, encoder_hyperparams_file, encoder_model_name, models_dir)
+    encoder_model = load_trained_model(test_processed, encoder_hyperparams_file, encoder_model_name, models_dir, ordinal_treatments=ordinal_treatments)
     
     # For decoder evaluation, we would need to implement the sequence-to-sequence prediction
     # For now, return the encoder RMSE as a placeholder

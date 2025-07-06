@@ -21,6 +21,8 @@ def init_arg():
     parser.add_argument("--model_name", default="crn_glucose_test")
     parser.add_argument("--b_encoder_hyperparm_tuning", default=False, type=bool)
     parser.add_argument("--b_decoder_hyperparm_tuning", default=False, type=bool)
+    parser.add_argument("--ordinal_treatments", default=False, type=bool,
+                       help="Use ordinal (continuous) treatment encoding instead of one-hot")
     return parser.parse_args()
 
 
@@ -51,7 +53,8 @@ if __name__ == '__main__':
     rmse_encoder = test_CRN_encoder_glucose(pickle_map=pickle_map, models_dir=models_dir,
                                            encoder_model_name=encoder_model_name,
                                            encoder_hyperparams_file=encoder_hyperparams_file,
-                                           b_encoder_hyperparm_tuning=args.b_encoder_hyperparm_tuning)
+                                           b_encoder_hyperparm_tuning=args.b_encoder_hyperparm_tuning,
+                                           ordinal_treatments=args.ordinal_treatments)
 
     # Train and evaluate decoder
     decoder_model_name = 'decoder_' + args.model_name
@@ -67,12 +70,14 @@ if __name__ == '__main__':
                                            encoder_hyperparams_file=encoder_hyperparams_file,
                                            decoder_model_name=decoder_model_name,
                                            decoder_hyperparams_file=decoder_hyperparams_file,
-                                           b_decoder_hyperparm_tuning=args.b_decoder_hyperparm_tuning)
+                                           b_decoder_hyperparm_tuning=args.b_decoder_hyperparm_tuning,
+                                           ordinal_treatments=args.ordinal_treatments)
 
     logging.info("Glucose CRN Model Results")
     logging.info(f"Data path: {args.data_path}")
     logging.info(f"Sequence length: {args.sequence_length}")
     logging.info(f"Prediction horizon: {args.prediction_horizon}")
+    logging.info(f"Treatment encoding: {'Ordinal (continuous)' if args.ordinal_treatments else 'One-hot (binary)'}")
     
     print("RMSE for one-step-ahead glucose prediction:")
     print(rmse_encoder)
