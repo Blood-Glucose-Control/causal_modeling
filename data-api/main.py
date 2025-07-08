@@ -5,7 +5,14 @@ from datetime import datetime, timedelta
 import os
 import uuid
 
-class EnhancedGlucoseGenerator:
+
+# pandas settings
+pd.set_option('display.max_columns', None) # Show all columns
+pd.set_option('display.max_rows', None) # Show all rows
+pd.set_option('display.max_colwidth', None) # Prevent truncation of long values
+pd.set_option('display.width', 400) # Set width of the display
+
+class GlucoseSim:
     def __init__(self, seed=42):
         self.rng = np.random.default_rng(seed)
         self.params = {
@@ -182,9 +189,9 @@ class EnhancedGlucoseGenerator:
         
         return self._recalculate_glucose(df)
 
-class CounterfactualService:
+class CouterfactualModel:
     def __init__(self, seed=42):
-        self.generator = EnhancedGlucoseGenerator(seed)
+        self.generator = GlucoseSim(seed)
     
     def _get_intervention_by_id(self, base_data, intervention_id):
         """Get intervention details by ID"""
@@ -201,18 +208,26 @@ class CounterfactualService:
         
         raise ValueError(f"Intervention ID '{intervention_id}' not found")
     
+    def _get_next_counterfactual_number(self, base_data):
+        """Get the next counterfactual number based on existing counterfactuals"""
+        existing_counterfactuals = [attr for attr in base_data.attrs.keys() if attr.startswith('counterfactual_cf')]
+        return len(existing_counterfactuals) + 1
+    
     def generate_dose_counterfactual(self, base_data, intervention_id, new_dose_factor, 
                                    before_minutes=120, after_minutes=180, num_scenarios=1):
         """
-        Generate counterfactual for a specific intervention with modified dose
+        Generate dose counterfactual and return baseline data with counterfactual columns
         
         Args:
-            base_data: Original patient data
+            base_data: Original patient data (can already contain counterfactual columns)
             intervention_id: Unique ID of the specific insulin intervention to modify
             new_dose_factor: Factor to multiply the original dose by
             before_minutes: Minutes before intervention to include in results
             after_minutes: Minutes after intervention to include in results
             num_scenarios: Number of stochastic scenarios to generate
+        
+        Returns:
+            DataFrame with original data plus counterfactual columns for changed values
         """
         target_intervention = self._get_intervention_by_id(base_data, intervention_id)
         target_time = target_intervention['timestamp']
@@ -223,11 +238,20 @@ class CounterfactualService:
         start_time = target_time - timedelta(minutes=before_minutes)
         end_time = target_time + timedelta(minutes=after_minutes)
         
-        results = []
+        # Generate unique counterfactual ID and number
+        counterfactual_id = str(uuid.uuid4())
+        cf_number = self._get_next_counterfactual_number(base_data)
+        cf_prefix = f"cf{cf_number}"
+        
+        # Start with the baseline data
+        result_df = base_data.copy()
+        
+        # Generate counterfactual scenarios
+        counterfactual_results = []
         
         for scenario in range(num_scenarios):
             # Create new generator with different seed for each scenario
-            scenario_generator = EnhancedGlucoseGenerator(seed=42 + scenario)
+            scenario_generator = GlucoseSim(seed=42 + scenario)
             
             # Modify the specific insulin dose
             modified_data = base_data.copy()
@@ -235,12 +259,45 @@ class CounterfactualService:
             
             # Recalculate glucose for entire dataset
             full_result = scenario_generator._recalculate_glucose(modified_data)
+            counterfactual_results.append(full_result)
+        
+        # Average across scenarios if multiple scenarios
+        if num_scenarios > 1:
+            # Average the counterfactual results
+            avg_glucose = np.mean([df['glucose'].values for df in counterfactual_results], axis=0)
+            avg_active_insulin = np.mean([df['active_insulin'].values for df in counterfactual_results], axis=0)
+            avg_carb_impact = np.mean([df['carb_impact'].values for df in counterfactual_results], axis=0)
             
-            # Extract the time window around the intervention
-            window_result = full_result[start_time:end_time].copy()
-            
-            # Add metadata
-            window_result.attrs = {
+            # Use the first scenario's structure and replace with averages
+            final_counterfactual = counterfactual_results[0].copy()
+            final_counterfactual['glucose'] = avg_glucose
+            final_counterfactual['active_insulin'] = avg_active_insulin
+            final_counterfactual['carb_impact'] = avg_carb_impact
+        else:
+            final_counterfactual = counterfactual_results[0]
+        
+        # Add counterfactual columns for changed values
+        result_df[f'{cf_prefix}_insulin'] = result_df['insulin'].copy()
+        result_df.loc[target_time, f'{cf_prefix}_insulin'] = new_dose
+        
+        # Add counterfactual columns for affected values (only in the time window)
+        window_mask = (result_df.index >= start_time) & (result_df.index <= end_time)
+        
+        result_df[f'{cf_prefix}_glucose'] = result_df['glucose'].astype(float)
+        result_df.loc[window_mask, f'{cf_prefix}_glucose'] = final_counterfactual.loc[window_mask, 'glucose']
+        
+        result_df[f'{cf_prefix}_active_insulin'] = result_df['active_insulin'].astype(float)
+        result_df.loc[window_mask, f'{cf_prefix}_active_insulin'] = final_counterfactual.loc[window_mask, 'active_insulin']
+        
+        result_df[f'{cf_prefix}_carb_impact'] = result_df['carb_impact'].astype(float)
+        result_df.loc[window_mask, f'{cf_prefix}_carb_impact'] = final_counterfactual.loc[window_mask, 'carb_impact']
+        
+        # Add metadata as DataFrame attributes
+        result_df.attrs.update({
+            f'counterfactual_{cf_prefix}': {
+                'counterfactual_id': counterfactual_id,
+                'cf_number': cf_number,
+                'type': 'dose',
                 'intervention_id': intervention_id,
                 'target_time': target_time,
                 'original_dose': original_dose,
@@ -248,25 +305,29 @@ class CounterfactualService:
                 'dose_factor': new_dose_factor,
                 'before_minutes': before_minutes,
                 'after_minutes': after_minutes,
-                'scenario': scenario
+                'num_scenarios': num_scenarios,
+                'window_start': start_time,
+                'window_end': end_time
             }
-            
-            results.append(window_result)
+        })
         
-        return results
+        return result_df
     
     def generate_timing_counterfactual(self, base_data, intervention_id, timing_shift_minutes,
                                      before_minutes=120, after_minutes=180, num_scenarios=1):
         """
-        Generate counterfactual for a specific intervention with modified timing
+        Generate timing counterfactual and return baseline data with counterfactual columns
         
         Args:
-            base_data: Original patient data
+            base_data: Original patient data (can already contain counterfactual columns)
             intervention_id: Unique ID of the specific insulin intervention to modify
             timing_shift_minutes: Minutes to shift the intervention (negative = earlier, positive = later)
             before_minutes: Minutes before intervention to include in results
             after_minutes: Minutes after intervention to include in results
             num_scenarios: Number of stochastic scenarios to generate
+        
+        Returns:
+            DataFrame with original data plus counterfactual columns for changed values
         """
         target_intervention = self._get_intervention_by_id(base_data, intervention_id)
         original_time = target_intervention['timestamp']
@@ -277,11 +338,20 @@ class CounterfactualService:
         start_time = original_time - timedelta(minutes=before_minutes)
         end_time = original_time + timedelta(minutes=after_minutes)
         
-        results = []
+        # Generate unique counterfactual ID and number
+        counterfactual_id = str(uuid.uuid4())
+        cf_number = self._get_next_counterfactual_number(base_data)
+        cf_prefix = f"cf{cf_number}"
+        
+        # Start with the baseline data
+        result_df = base_data.copy()
+        
+        # Generate counterfactual scenarios
+        counterfactual_results = []
         
         for scenario in range(num_scenarios):
             # Create new generator with different seed for each scenario
-            scenario_generator = EnhancedGlucoseGenerator(seed=42 + scenario)
+            scenario_generator = GlucoseSim(seed=42 + scenario)
             
             # Modify the intervention timing
             modified_data = base_data.copy()
@@ -292,34 +362,71 @@ class CounterfactualService:
             if new_time in modified_data.index:
                 modified_data.loc[new_time, 'insulin'] = dose
                 modified_data.loc[new_time, 'intervention_id'] = intervention_id
+                actual_new_time = new_time
             else:
                 # Find closest time
                 closest_idx = modified_data.index[modified_data.index.get_indexer([new_time], method='nearest')[0]]
                 modified_data.loc[closest_idx, 'insulin'] = dose
                 modified_data.loc[closest_idx, 'intervention_id'] = intervention_id
-                new_time = closest_idx  # Update to actual time used
+                actual_new_time = closest_idx
             
             # Recalculate glucose for entire dataset
             full_result = scenario_generator._recalculate_glucose(modified_data)
+            counterfactual_results.append((full_result, actual_new_time))
+        
+        # Average across scenarios if multiple scenarios
+        if num_scenarios > 1:
+            # Average the counterfactual results
+            avg_glucose = np.mean([df[0]['glucose'].values for df in counterfactual_results], axis=0)
+            avg_active_insulin = np.mean([df[0]['active_insulin'].values for df in counterfactual_results], axis=0)
+            avg_carb_impact = np.mean([df[0]['carb_impact'].values for df in counterfactual_results], axis=0)
             
-            # Extract the time window around the ORIGINAL intervention time
-            window_result = full_result[start_time:end_time].copy()
-            
-            # Add metadata
-            window_result.attrs = {
+            # Use the first scenario's structure and replace with averages
+            final_counterfactual = counterfactual_results[0][0].copy()
+            final_counterfactual['glucose'] = avg_glucose
+            final_counterfactual['active_insulin'] = avg_active_insulin
+            final_counterfactual['carb_impact'] = avg_carb_impact
+            actual_new_time = counterfactual_results[0][1]
+        else:
+            final_counterfactual, actual_new_time = counterfactual_results[0]
+        
+        # Add counterfactual columns for changed values
+        result_df[f'{cf_prefix}_insulin'] = result_df['insulin'].copy()
+        result_df.loc[original_time, f'{cf_prefix}_insulin'] = 0.0  # Remove from original time
+        result_df.loc[actual_new_time, f'{cf_prefix}_insulin'] = dose  # Add at new time
+        
+        # Add counterfactual columns for affected values (only in the time window)
+        window_mask = (result_df.index >= start_time) & (result_df.index <= end_time)
+        
+        result_df[f'{cf_prefix}_glucose'] = result_df['glucose'].astype(float)
+        result_df.loc[window_mask, f'{cf_prefix}_glucose'] = final_counterfactual.loc[window_mask, 'glucose']
+        
+        result_df[f'{cf_prefix}_active_insulin'] = result_df['active_insulin'].astype(float)
+        result_df.loc[window_mask, f'{cf_prefix}_active_insulin'] = final_counterfactual.loc[window_mask, 'active_insulin']
+        
+        result_df[f'{cf_prefix}_carb_impact'] = result_df['carb_impact'].astype(float)
+        result_df.loc[window_mask, f'{cf_prefix}_carb_impact'] = final_counterfactual.loc[window_mask, 'carb_impact']
+        
+        # Add metadata as DataFrame attributes
+        result_df.attrs.update({
+            f'counterfactual_{cf_prefix}': {
+                'counterfactual_id': counterfactual_id,
+                'cf_number': cf_number,
+                'type': 'timing',
                 'intervention_id': intervention_id,
                 'original_time': original_time,
-                'new_time': new_time,
+                'new_time': actual_new_time,
                 'timing_shift_minutes': timing_shift_minutes,
                 'dose': dose,
                 'before_minutes': before_minutes,
                 'after_minutes': after_minutes,
-                'scenario': scenario
+                'num_scenarios': num_scenarios,
+                'window_start': start_time,
+                'window_end': end_time
             }
-            
-            results.append(window_result)
+        })
         
-        return results
+        return result_df
     
     def list_interventions(self, base_data):
         """List all available interventions with their details"""
@@ -335,13 +442,20 @@ class CounterfactualService:
             })
         
         return interventions
-
-def test_service():
-    global service, base_data, dose_results, dose_results_df
-    """Test the counterfactual service"""
     
+    def get_counterfactual_summary(self, df):
+        """Get a summary of all counterfactuals applied to the DataFrame"""
+        counterfactuals = []
+        for attr_name, attr_value in df.attrs.items():
+            if attr_name.startswith('counterfactual_cf'):
+                counterfactuals.append(attr_value)
+        return counterfactuals
+
+
+
+if __name__ == "__main__":
     # Generate base patient history (7 days)
-    service = CounterfactualService()
+    service = CouterfactualModel()
     base_data = service.generator.generate_data(days=7)
     
     print("Base patient data generated:")
@@ -353,23 +467,31 @@ def test_service():
     print("Available interventions:")
     for intervention in interventions:
         print(f"ID {intervention['id']}: {intervention['timestamp']} - {intervention['dose']:.1f}u insulin")
-    print()
-    
-    # Test dose counterfactual for first intervention
-    if interventions:
-        print(f"Dose counterfactual (ID {interventions[0]['id']}, 1.25x dose):")
-        dose_results = service.generate_dose_counterfactual(
-            base_data, 
-            intervention_id=interventions[0]['id'],
-            new_dose_factor=1.25,
-            before_minutes=60,
-            after_minutes=120,
-            num_scenarios=2
-        )
-        dose_results_df = pd.concat(dose_results)
-        
-        print(f"Generated {len(dose_results)} counterfactual scenarios")
-        print(f"Combined result shape: {dose_results_df.shape}")
 
-if __name__ == "__main__":
-    test_service() 
+    ## hardcoded
+    print("\nCreating dose counterfactual")
+    dose_results = service.generate_dose_counterfactual(
+        base_data, 
+        intervention_id=interventions[0]['id'],
+        new_dose_factor=1.25,
+        before_minutes=60,
+        after_minutes=120,
+        num_scenarios=2
+    )
+
+
+    print("Creating timing counterfactual")
+    timing_results = service.generate_timing_counterfactual(
+        dose_results, 
+        intervention_id=interventions[0]['id'],
+        timing_shift_minutes=-30,
+        before_minutes=60,
+        after_minutes=120,
+        num_scenarios=2
+    )
+
+    # print timing results for the effected time window
+    start_time = interventions[0]['timestamp'] - timedelta(minutes=60)
+    end_time = interventions[0]['timestamp'] + timedelta(minutes=120)
+    window_data = timing_results.loc[(timing_results.index >= start_time) & (timing_results.index <= end_time)]
+    print(window_data)
