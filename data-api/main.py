@@ -12,7 +12,13 @@ pd.set_option('display.max_rows', None) # Show all rows
 pd.set_option('display.max_colwidth', None) # Prevent truncation of long values
 pd.set_option('display.width', 400) # Set width of the display
 
-class GlucoseSim:
+class GlucoseSimulator:
+    """
+    Simulates realistic glucose responses to insulin, food, exercise, and stress.
+    
+    This creates synthetic patient data that behaves like real diabetes management,
+    including realistic insulin curves, carb absorption, and daily patterns.
+    """
     def __init__(self, seed=42):
         self.rng = np.random.default_rng(seed)
         self.params = {
@@ -118,7 +124,21 @@ class GlucoseSim:
         df['carb_impact'] = carb_impact
         return df
 
-    def generate_data(self, days=1, start_date='2024-01-01'):
+    def generate_patient_data(self, days=1, start_date='2024-01-01'):
+        """
+        Generate realistic patient glucose data with meals, insulin, exercise, and stress.
+        
+        Args:
+            days: Number of days to simulate
+            start_date: Starting date for the simulation
+            
+        Returns:
+            DataFrame with glucose, insulin, carbs, exercise, stress columns
+            
+        Example:
+            simulator = GlucoseSimulator()
+            data = simulator.generate_patient_data(days=7, start_date='2024-01-01')
+        """
         # Create timestamps (5-minute intervals)
         start = pd.to_datetime(start_date)
         end = start + timedelta(days=days)
@@ -189,9 +209,16 @@ class GlucoseSim:
         
         return self._recalculate_glucose(df)
 
-class CouterfactualModel:
+class CounterfactualAnalyzer:
+    """
+    Analyzes 'what-if' scenarios for diabetes management.
+    
+    This can answer questions like:
+    - "What if I had taken 20% more insulin?"
+    - "What if I had taken insulin 30 minutes earlier?"
+    """
     def __init__(self, seed=42):
-        self.generator = GlucoseSim(seed)
+        self.generator = GlucoseSimulator(seed)
     
     def _get_intervention_by_id(self, base_data, intervention_id):
         """Get intervention details by ID"""
@@ -251,7 +278,7 @@ class CouterfactualModel:
         
         for scenario in range(num_scenarios):
             # Create new generator with different seed for each scenario
-            scenario_generator = GlucoseSim(seed=42 + scenario)
+            scenario_generator = GlucoseSimulator(seed=42 + scenario)
             
             # Modify the specific insulin dose
             modified_data = base_data.copy()
@@ -351,7 +378,7 @@ class CouterfactualModel:
         
         for scenario in range(num_scenarios):
             # Create new generator with different seed for each scenario
-            scenario_generator = GlucoseSim(seed=42 + scenario)
+            scenario_generator = GlucoseSimulator(seed=42 + scenario)
             
             # Modify the intervention timing
             modified_data = base_data.copy()
@@ -452,46 +479,107 @@ class CouterfactualModel:
         return counterfactuals
 
 
+class DiabetesAnalyzer:
+    """
+    Main interface for diabetes counterfactual analysis.
+    
+    This is your one-stop shop for:
+    1. Generating realistic patient data
+    2. Analyzing 'what-if' scenarios
+    3. Comparing different treatment decisions
+    
+    Example:
+        analyzer = DiabetesAnalyzer()
+        patient_data = analyzer.generate_patient_data(days=30)
+        analysis = analyzer.analyze_dose_change(patient_data, intervention_id, factor=1.2)
+    """
+    
+    def __init__(self, seed=42):
+        self.counterfactual_model = CounterfactualAnalyzer(seed)
+    
+    def generate_patient_data(self, n_days=30, start_date='2024-01-01'):
+        """Generate synthetic patient data with realistic glucose patterns"""
+        return self.counterfactual_model.generator.generate_patient_data(days=n_days, start_date=start_date)
+
+    def analyze_intervention(self, patient_data, intervention_id, 
+                           analysis_type='dose', before_minutes=120, after_minutes=180, **kwargs):
+        """
+        Analyze what would happen if you changed an insulin intervention.
+        
+        Args:
+            patient_data: Patient glucose data from generate_patient_data()
+            intervention_id: ID of the insulin dose to analyze (get from list_interventions())
+            analysis_type: 'dose' or 'timing'
+            before_minutes: How many minutes before intervention to analyze
+            after_minutes: How many minutes after intervention to analyze
+            **kwargs: For dose analysis: dose_factor (e.g., 1.2 = 20% more insulin)
+                     For timing analysis: timing_shift_minutes (e.g., -30 = 30 min earlier)
+        
+        Returns:
+            DataFrame with original and counterfactual data
+        """
+
+        if analysis_type == 'dose':
+            if 'dose_factor' not in kwargs:
+                raise ValueError("dose_factor is required for dose analysis (e.g., dose_factor=1.2 for 20% more insulin)")
+            dose_factor = kwargs['dose_factor']
+            return self.counterfactual_model.generate_dose_counterfactual(
+                patient_data, intervention_id, dose_factor, before_minutes, after_minutes
+            )
+        elif analysis_type == 'timing':
+            if 'timing_shift_minutes' not in kwargs:
+                raise ValueError("timing_shift_minutes is required for timing analysis (e.g., timing_shift_minutes=-30 for 30 min earlier)")
+            timing_shift = kwargs['timing_shift_minutes']
+            return self.counterfactual_model.generate_timing_counterfactual(
+                patient_data, intervention_id, timing_shift, before_minutes, after_minutes
+            )
+        else:
+            raise ValueError(f"Unknown analysis type: {analysis_type}. Use 'dose' or 'timing'")
+
 
 if __name__ == "__main__":
-    # Generate base patient history (7 days)
-    service = CouterfactualModel()
-    base_data = service.generator.generate_data(days=7)
+    # Example usage of the ML Evaluation Service
+
     
-    print("Base patient data generated:")
-    print(f"Shape (rows, cols): {base_data.shape}")
-    print(f"Total insulin doses: {(base_data['insulin'] > 0).sum()}\n")
+    # Initialize the analyzer
+    analyzer = DiabetesAnalyzer(seed=42)
     
-    # List available interventions
-    interventions = service.list_interventions(base_data)
-    print("Available interventions:")
-    for intervention in interventions:
-        print(f"ID {intervention['id']}: {intervention['timestamp']} - {intervention['dose']:.1f}u insulin")
+    # Generate patient history
+    print("=== Diabetes Counterfactual Analysis Demo ===")
+    print("\n1. Generating 30 days of patient data...")
+    patient_data = analyzer.generate_patient_data(n_days=30, start_date='2024-01-01')
+    
+    print(f"✓ Generated {len(patient_data)} data points ({patient_data.shape[0] / 288:.1f} days)")
+    print(f"✓ Found {(patient_data['insulin'] > 0).sum()} insulin interventions")
 
-    ## hardcoded
-    print("\nCreating dose counterfactual")
-    dose_results = service.generate_dose_counterfactual(
-        base_data, 
-        intervention_id=interventions[0]['id'],
-        new_dose_factor=1.25,
-        before_minutes=60,
-        after_minutes=120,
-        num_scenarios=2
+    # List interventions
+    interventions = analyzer.counterfactual_model.list_interventions(patient_data)
+    print(f"\n2. Available insulin interventions:")
+    for i, intv in enumerate(interventions[:3]):  # Show first 3
+        print(f"  {i+1}. {intv['timestamp'].strftime('%Y-%m-%d %H:%M')} - {intv['dose']:.1f} units")
+    if len(interventions) > 3:
+        print(f"  ... and {len(interventions)-3} more")
+
+    # Analyze what-if scenario
+    print(f"\n3. Analyzing: What if we gave 20% more insulin?")
+    chosen_intervention_id = interventions[0]['id']
+    analysis_result = analyzer.analyze_intervention(
+        patient_data,
+        intervention_id=chosen_intervention_id,
+        analysis_type='dose',
+        before_minutes=120,
+        after_minutes=180,
+        dose_factor=1.2
     )
-
-
-    print("Creating timing counterfactual")
-    timing_results = service.generate_timing_counterfactual(
-        dose_results, 
-        intervention_id=interventions[0]['id'],
-        timing_shift_minutes=-30,
-        before_minutes=60,
-        after_minutes=120,
-        num_scenarios=2
-    )
-
-    # print timing results for the effected time window
-    start_time = interventions[0]['timestamp'] - timedelta(minutes=60)
-    end_time = interventions[0]['timestamp'] + timedelta(minutes=120)
-    window_data = timing_results.loc[(timing_results.index >= start_time) & (timing_results.index <= end_time)]
-    print(window_data)
+    
+    # Show the results
+    cf_meta = analysis_result.attrs['counterfactual_cf1']
+    window_mask = (analysis_result.index >= cf_meta['window_start']) & (analysis_result.index <= cf_meta['window_end'])
+    comparison_df = analysis_result.loc[window_mask].drop(columns=['meal_insulin_delay', 'active_insulin', 'carb_impact', 'cf1_active_insulin', 'cf1_carb_impact'])
+    
+    print(f"\n4. Results: Original vs 20% More Insulin")
+    print(f"   Original dose: {cf_meta['original_dose']:.1f} units")
+    print(f"   New dose: {cf_meta['new_dose']:.1f} units")
+    print(f"   Time window: {cf_meta['before_minutes']} min before to {cf_meta['after_minutes']} min after")
+    print(f"\n   Comparison data:")
+    print(comparison_df.round(1))

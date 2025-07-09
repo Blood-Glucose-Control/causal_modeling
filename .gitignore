@@ -4,6 +4,26 @@ data_standardization/misc/*
 # Jupyter Notebook
 temp.ipynb 
 
-# Python
+# Python Virtual Environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+env.bak/
+venv.bak/
 \venv
 \causalimpact_env
+
+# model-CRN specific
+model-CRN/results/
+
+# cache and compiled files
+__pycache__/
+*/__pycache__/
+
+# environments
+.env
+.venv
+env/
+venv/
