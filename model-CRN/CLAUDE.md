@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Environment Setup
 
-This project uses `uv` for Python environment management. Install dependencies:
+This project uses `uv` for Python environment management. Install dependencies and activate virtual environment:
 
 ```bash
 uv sync
+source .venv/bin/activate
 ```
 
 The project requires Python ≥3.7 and key dependencies:
@@ -19,7 +20,7 @@ The project requires Python ≥3.7 and key dependencies:
 
 ## Project Context
 
-This codebase implements the **Counterfactual Recurrent Network (CRN)** from the ICLR 2020 paper "Estimating counterfactual treatment outcomes over time through adversarially balanced representations". The model was originally designed for cancer treatment planning but has been adapted for **diabetes modeling** as indicated in the pyproject.toml.
+This codebase implements the **Counterfactual Recurrent Network (CRN)** from the ICLR 2020 paper "Estimating counterfactual treatment outcomes over time through adversarially balanced representations". The model was originally designed for cancer treatment planning with one-hot key encoded treatments, but it in the process of being adapted for **diabetes modeling** where the treatment is either insulin dose timing relative to meal, or it's insulin dosage strength, and the outcome is blood glucose over time, with relevant confounders in the time-series data being de-confounded. The training data will consist of historical data per patient, and evaluation on each training set will be done on the patient itself. I.e. the purpose is a personalized model per patient per their own history and data.
 
 ## Common Commands
 
@@ -67,7 +68,7 @@ The key innovation is using **domain adversarial training** to handle time-depen
 - **CRN_model.py**: Main model with encoder/decoder architecture
 - **Domain Adversarial Training**: Uses gradient reversal to create treatment-invariant representations
 - **Sequence-to-Sequence**: Handles variable-length patient histories and future treatment sequences
-- **Cancer Simulation** (`utils/cancer_simulation.py`): Generates synthetic data with controllable confounding
+- **Cancer Simulation** (`utils/cancer_simulation.py`): Generates synthetic data with controllable confounding for the cancer usecase
 
 ### Medical Applications
 
