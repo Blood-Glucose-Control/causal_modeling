@@ -203,21 +203,24 @@ def get_processed_data_diabetes(raw_sim_data, scaling_params):
     encoded_doses = encoder.encode_doses(discrete_doses)
     
     # Reshape for CRN format: [batch, time, features]
+    # Note: previous_treatments should be 1 timestep shorter than current_treatments
+    # because build_feed_dictionary will add a zero column at the beginning
     if encoded_doses.ndim == 2:
-        encoded_treatments = encoded_doses[:, :-offset, np.newaxis]  # Remove last timestep
-        encoded_previous_treatments = encoded_doses[:, :-1, np.newaxis]  # Shift by one
+        encoded_treatments = encoded_doses[:, :-offset, np.newaxis]  # Remove last timestep  
+        encoded_previous_treatments = encoded_doses[:, :-offset-1, np.newaxis]  # Remove last 2 timesteps
     else:
         encoded_treatments = encoded_doses[:, :-offset]
-        encoded_previous_treatments = encoded_doses[:, :-1]
+        encoded_previous_treatments = encoded_doses[:, :-offset-1]
     
     # Set outputs (glucose prediction)
     outputs = normalized_glucose[:, horizon:, np.newaxis]
     
-    # Add active entries
+    # Add active entries - adjust for the shortened sequences
     active_entries = np.zeros(outputs.shape)
     for i in range(sequence_lengths.shape[0]):
-        sequence_length = int(sequence_lengths[i])
-        active_entries[i, :sequence_length, :] = 1
+        # Sequence length should match the output length after processing
+        actual_length = min(int(sequence_lengths[i]) - horizon, outputs.shape[1])
+        active_entries[i, :actual_length, :] = 1
     
     # Update data dictionary
     raw_sim_data['current_covariates'] = current_covariates

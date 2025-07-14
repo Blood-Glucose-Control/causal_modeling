@@ -277,13 +277,23 @@ class CRN_Model:
 
     def gen_epoch(self, dataset, batch_size, training_mode=True):
         dataset_size = dataset['current_covariates'].shape[0]
-        num_batches = int(dataset_size / batch_size) + 1
+        
+        # Handle case where dataset is smaller than batch size
+        if dataset_size <= batch_size:
+            num_batches = 1
+        else:
+            num_batches = int(dataset_size / batch_size) + 1
 
         for i in range(num_batches):
-            if (i == num_batches - 1):
-                batch_samples = range(dataset_size - batch_size, dataset_size)
+            if dataset_size <= batch_size:
+                # Use all data if dataset is smaller than batch size
+                batch_samples = range(dataset_size)
+            elif (i == num_batches - 1):
+                # Last batch: ensure we don't go negative
+                start_idx = max(0, dataset_size - batch_size)
+                batch_samples = range(start_idx, dataset_size)
             else:
-                batch_samples = range(i * batch_size, (i + 1) * batch_size)
+                batch_samples = range(i * batch_size, min((i + 1) * batch_size, dataset_size))
 
             if training_mode:
                 batch_current_covariates = dataset['current_covariates'][batch_samples, :, :]
