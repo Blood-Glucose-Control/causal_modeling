@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from CRN_model import CRN_Model
+from utils.insulin_encoding import InsulinEncoder, process_diabetes_treatments
 
 import pickle
 
@@ -41,9 +42,36 @@ def load_trained_model(dataset_test, hyperparams_file, model_name, model_folder,
 
 
 def get_processed_data(raw_sim_data,
-                       scaling_params):
+                       scaling_params,
+                       treatment_encoding='onehot'):
     """
-    Create formatted data to train both encoder and seq2seq atchitecture.
+    Create formatted data to train both encoder and seq2seq architecture.
+    
+    Args:
+        raw_sim_data: Raw simulation data
+        scaling_params: Mean and std for normalization
+        treatment_encoding: 'onehot' for cancer (backward compatibility) or 'integer' for diabetes
+    """
+    mean, std = scaling_params
+
+    horizon = 1
+    offset = 1
+
+    # Handle cancer data (backward compatibility)
+    if treatment_encoding == 'onehot':
+        return get_processed_data_cancer(raw_sim_data, scaling_params)
+    
+    # Handle diabetes data with integer encoding
+    elif treatment_encoding == 'integer':
+        return get_processed_data_diabetes(raw_sim_data, scaling_params)
+    
+    else:
+        raise ValueError(f"Unknown treatment encoding: {treatment_encoding}")
+
+
+def get_processed_data_cancer(raw_sim_data, scaling_params):
+    """
+    Original cancer data processing with one-hot treatment encoding.
     """
     mean, std = scaling_params
 
@@ -117,6 +145,103 @@ def get_processed_data(raw_sim_data,
     raw_sim_data['output_means'] = output_means
     raw_sim_data['output_stds'] = output_stds
 
+    return raw_sim_data
+
+
+def get_processed_data_diabetes(raw_sim_data, scaling_params):
+    """
+    Diabetes data processing with integer treatment encoding.
+    
+    Expects raw_sim_data to contain:
+    - glucose: glucose levels over time
+    - insulin_doses: continuous insulin doses
+    - other covariates (carbs, exercise, stress, etc.)
+    """
+    mean, std = scaling_params
+    
+    horizon = 1
+    offset = 1
+    
+    # Extract diabetes-specific variables
+    glucose = raw_sim_data['glucose']
+    insulin_doses = raw_sim_data['insulin_doses']
+    sequence_lengths = raw_sim_data['sequence_lengths']
+    
+    # Normalize glucose (main outcome)
+    if 'glucose' in mean:
+        normalized_glucose = (glucose - mean['glucose']) / std['glucose']
+    else:
+        # Fallback normalization
+        normalized_glucose = (glucose - glucose.mean()) / glucose.std()
+    
+    # Process covariates (add other diabetes covariates as needed)
+    covariates_list = []
+    
+    # Add glucose as primary covariate
+    covariates_list.append(normalized_glucose[:, :-offset, np.newaxis])
+    
+    # Add other diabetes covariates if available
+    for covariate in ['carbs', 'exercise', 'stress', 'active_insulin']:
+        if covariate in raw_sim_data:
+            covariate_data = raw_sim_data[covariate]
+            # Normalize if scaling params available
+            if covariate in mean and covariate in std:
+                normalized_covariate = (covariate_data - mean[covariate]) / std[covariate]
+            else:
+                # Simple standardization
+                normalized_covariate = (covariate_data - covariate_data.mean()) / covariate_data.std()
+            covariates_list.append(normalized_covariate[:, :-offset, np.newaxis])
+    
+    current_covariates = np.concatenate(covariates_list, axis=-1)
+    
+    # Process insulin doses with integer encoding
+    encoder = InsulinEncoder(num_dose_levels=5, encoding_type='integer')
+    
+    # Discretize and encode insulin doses
+    from utils.insulin_encoding import discretize_insulin_doses
+    discrete_doses = discretize_insulin_doses(insulin_doses, num_levels=5)
+    encoded_doses = encoder.encode_doses(discrete_doses)
+    
+    # Reshape for CRN format: [batch, time, features]
+    if encoded_doses.ndim == 2:
+        encoded_treatments = encoded_doses[:, :-offset, np.newaxis]  # Remove last timestep
+        encoded_previous_treatments = encoded_doses[:, :-1, np.newaxis]  # Shift by one
+    else:
+        encoded_treatments = encoded_doses[:, :-offset]
+        encoded_previous_treatments = encoded_doses[:, :-1]
+    
+    # Set outputs (glucose prediction)
+    outputs = normalized_glucose[:, horizon:, np.newaxis]
+    
+    # Add active entries
+    active_entries = np.zeros(outputs.shape)
+    for i in range(sequence_lengths.shape[0]):
+        sequence_length = int(sequence_lengths[i])
+        active_entries[i, :sequence_length, :] = 1
+    
+    # Update data dictionary
+    raw_sim_data['current_covariates'] = current_covariates
+    raw_sim_data['previous_treatments'] = encoded_previous_treatments
+    raw_sim_data['current_treatments'] = encoded_treatments
+    raw_sim_data['outputs'] = outputs
+    raw_sim_data['active_entries'] = active_entries
+    
+    # Store normalization parameters
+    if 'glucose' in mean and 'glucose' in std:
+        raw_sim_data['output_means'] = mean['glucose']
+        raw_sim_data['output_stds'] = std['glucose']
+    else:
+        raw_sim_data['output_means'] = glucose.mean()
+        raw_sim_data['output_stds'] = glucose.std()
+        
+    raw_sim_data['unscaled_outputs'] = (outputs * raw_sim_data['output_stds'] + raw_sim_data['output_means'])
+    
+    # Store encoder for later use
+    raw_sim_data['insulin_encoder'] = encoder
+    
+    print(f"Processed diabetes data - outputs shape: {outputs.shape}")
+    print(f"Treatment encoding: integer, range: [{encoded_treatments.min():.3f}, {encoded_treatments.max():.3f}]")
+    
     return raw_sim_data
 
 

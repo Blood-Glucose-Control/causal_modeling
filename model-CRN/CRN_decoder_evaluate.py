@@ -11,7 +11,7 @@ from CRN_model import CRN_Model
 
 def fit_CRN_decoder(dataset_train, dataset_val, model_name, model_dir,
                     encoder_hyperparams_file, decoder_hyperparams_file,
-                    b_hyperparam_opt):
+                    b_hyperparam_opt, treatment_encoding='onehot', num_dose_levels=4):
     logging.info("Fitting CRN decoder.")
 
     _, length, num_covariates = dataset_train['current_covariates'].shape
@@ -23,7 +23,9 @@ def fit_CRN_decoder(dataset_train, dataset_val, model_name, model_dir,
               'num_covariates': num_covariates,
               'num_outputs': num_outputs,
               'max_sequence_length': length,
-              'num_epochs': 100}
+              'num_epochs': 100,
+              'treatment_encoding': treatment_encoding,
+              'num_dose_levels': num_dose_levels}
 
     hyperparams = dict()
     num_simulations = 30
@@ -205,12 +207,12 @@ def process_counterfactual_seq_test_data(test_data, data_map, states, projection
 def test_CRN_decoder(pickle_map, max_projection_horizon, projection_horizon, models_dir,
                      encoder_model_name, encoder_hyperparams_file,
                      decoder_model_name, decoder_hyperparams_file,
-                     b_decoder_hyperparm_tuning):
+                     b_decoder_hyperparm_tuning, treatment_encoding='onehot', num_dose_levels=4):
     training_data = pickle_map['training_data']
     validation_data = pickle_map['validation_data']
     scaling_data = pickle_map['scaling_data']
-    training_processed = get_processed_data(training_data, scaling_data)
-    validation_processed = get_processed_data(validation_data, scaling_data)
+    training_processed = get_processed_data(training_data, scaling_data, treatment_encoding=treatment_encoding)
+    validation_processed = get_processed_data(validation_data, scaling_data, treatment_encoding=treatment_encoding)
 
     encoder_model = load_trained_model(validation_processed, encoder_hyperparams_file, encoder_model_name, models_dir)
     training_br_states = encoder_model.get_balancing_reps(training_processed)
@@ -222,10 +224,11 @@ def test_CRN_decoder(pickle_map, max_projection_horizon, projection_horizon, mod
     fit_CRN_decoder(dataset_train=training_seq_processed, dataset_val=validation_seq_processed,
                     model_dir=models_dir,
                     model_name=decoder_model_name, encoder_hyperparams_file=encoder_hyperparams_file,
-                    decoder_hyperparams_file=decoder_hyperparams_file, b_hyperparam_opt=b_decoder_hyperparm_tuning)
+                    decoder_hyperparams_file=decoder_hyperparams_file, b_hyperparam_opt=b_decoder_hyperparm_tuning,
+                    treatment_encoding=treatment_encoding, num_dose_levels=num_dose_levels)
 
     test_data_seq_actions = pickle_map['test_data_seq']
-    test_processed = get_processed_data(pickle_map['test_data_seq'], scaling_data)
+    test_processed = get_processed_data(pickle_map['test_data_seq'], scaling_data, treatment_encoding=treatment_encoding)
     encoder_model = load_trained_model(test_processed, encoder_hyperparams_file, encoder_model_name,
                                        models_dir)
     test_br_states = encoder_model.get_balancing_reps(test_processed)

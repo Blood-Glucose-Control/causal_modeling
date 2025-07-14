@@ -17,6 +17,15 @@ def init_arg():
     parser.add_argument("--model_name", default="crn_test_2")
     parser.add_argument("--b_encoder_hyperparm_tuning", default=False)
     parser.add_argument("--b_decoder_hyperparm_tuning", default=False)
+    
+    # New parameters for insulin encoding
+    parser.add_argument("--treatment_encoding", default="onehot", choices=["onehot", "integer"],
+                       help="Treatment encoding strategy: 'onehot' for cancer, 'integer' for diabetes")
+    parser.add_argument("--num_dose_levels", default=5, type=int,
+                       help="Number of dose levels for integer encoding (diabetes)")
+    parser.add_argument("--data_type", default="cancer", choices=["cancer", "diabetes"],
+                       help="Type of data to use: 'cancer' or 'diabetes'")
+    
     return parser.parse_args()
 
 
@@ -28,8 +37,23 @@ if __name__ == '__main__':
         os.mkdir(args.results_dir)
 
     logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
-    pickle_map = get_cancer_sim_data(chemo_coeff=args.chemo_coeff, radio_coeff=args.radio_coeff, b_load=False,
-                                          b_save=False, model_root=args.results_dir)
+    
+    # Load data based on type
+    if args.data_type == "cancer":
+        pickle_map = get_cancer_sim_data(chemo_coeff=args.chemo_coeff, radio_coeff=args.radio_coeff, 
+                                        b_load=False, b_save=False, model_root=args.results_dir)
+        # Ensure backward compatibility for cancer models
+        if args.treatment_encoding == "integer":
+            logging.warning("Integer encoding requested for cancer data. Switching to one-hot for compatibility.")
+            args.treatment_encoding = "onehot"
+    else:  # diabetes
+        # For now, use cancer data as placeholder until diabetes data pipeline is integrated
+        logging.info("Diabetes data type selected. Using cancer simulation as placeholder.")
+        logging.info("TODO: Integrate with diabetes data-api for actual diabetes data.")
+        pickle_map = get_cancer_sim_data(chemo_coeff=args.chemo_coeff, radio_coeff=args.radio_coeff, 
+                                        b_load=False, b_save=False, model_root=args.results_dir)
+        # Force integer encoding for diabetes
+        args.treatment_encoding = "integer"
 
     encoder_model_name = 'encoder_' + args.model_name
     encoder_hyperparams_file = '{}/{}_best_hyperparams.txt'.format(args.results_dir, encoder_model_name)
@@ -41,7 +65,9 @@ if __name__ == '__main__':
     rmse_encoder = test_CRN_encoder(pickle_map=pickle_map, models_dir=models_dir,
                                     encoder_model_name=encoder_model_name,
                                     encoder_hyperparams_file=encoder_hyperparams_file,
-                                    b_encoder_hyperparm_tuning=args.b_encoder_hyperparm_tuning)
+                                    b_encoder_hyperparm_tuning=args.b_encoder_hyperparm_tuning,
+                                    treatment_encoding=args.treatment_encoding,
+                                    num_dose_levels=args.num_dose_levels)
 
 
     decoder_model_name = 'decoder_' + args.model_name
@@ -63,7 +89,9 @@ if __name__ == '__main__':
                                     encoder_hyperparams_file=encoder_hyperparams_file,
                                     decoder_model_name=decoder_model_name,
                                     decoder_hyperparams_file=decoder_hyperparams_file,
-                                    b_decoder_hyperparm_tuning=args.b_decoder_hyperparm_tuning)
+                                    b_decoder_hyperparm_tuning=args.b_decoder_hyperparm_tuning,
+                                    treatment_encoding=args.treatment_encoding,
+                                    num_dose_levels=args.num_dose_levels)
 
     logging.info("Chemo coeff {} | Radio coeff {}".format(args.chemo_coeff, args.radio_coeff))
     print("RMSE for one-step-ahead prediction.")
