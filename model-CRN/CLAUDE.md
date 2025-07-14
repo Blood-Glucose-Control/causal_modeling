@@ -157,6 +157,152 @@ To adapt CRN for other applications (e.g., diabetes, medication management):
 
 The **general CRN architecture** (adversarial balancing + sequence modeling) is domain-agnostic and can be applied to any sequential treatment effect estimation problem.
 
+## Data-API Integration for Diabetes Modeling
+
+### Overview
+
+The **data-api** module (`data-api/main.py`) provides a synthetic diabetes data generator and counterfactual analysis system designed specifically to support the CRN model's adaptation to diabetes management. This serves two critical roles in our research pipeline:
+
+1. **Training Data Generation**: Creates realistic patient glucose data for training the CRN model
+2. **Ground Truth Simulation**: Provides counterfactual scenarios for model evaluation and validation
+
+### Core Components
+
+The data-api consists of three main classes:
+
+- **`GlucoseSimulator`**: Generates realistic patient glucose patterns with meals, insulin, exercise, and stress
+- **`CounterfactualAnalyzer`**: Creates "what-if" scenarios for insulin dose and timing modifications  
+- **`DiabetesAnalyzer`**: Main interface combining data generation and counterfactual analysis
+
+### Data Generation Process
+
+#### Command Usage
+
+```bash
+# Basic usage (runs demo with 30 days of data)
+uv run python data-api/main.py
+
+# Programmatic usage
+from data-api.main import DiabetesAnalyzer
+analyzer = DiabetesAnalyzer(seed=42)
+patient_data = analyzer.generate_patient_data(n_days=30, start_date='2024-01-01') # creates  30 day training data
+# <add here how to add counterfactuals to the training data for ground truth evaluations>
+```
+
+#### Generated Data Structure
+
+The simulator produces time-series data at **5-minute intervals** with the following columns:
+
+**Core Variables:**
+- `glucose` (int64): Blood glucose levels (mg/dL), range 40-400
+- `carbs` (int64): Carbohydrate intake (grams) 
+- `insulin` (float64): Insulin doses (units)
+- `exercise` (int64): Exercise periods (binary)
+- `stress` (float64): Stress levels (0-1 scale)
+
+**Derived Variables:**
+- `active_insulin` (float64): Current insulin activity from past doses
+- `carb_impact` (float64): Current glucose impact from carb absorption
+- `meal_insulin_delay` (int64): Timing difference between meal and insulin (minutes)
+
+**Metadata:**
+- `intervention_id` (object): Unique UUID for each insulin intervention
+
+### Counterfactual Analysis Capabilities
+
+#### Dose Counterfactuals
+
+Analyze "what if we changed the insulin dose?" scenarios:
+
+```python
+# Example: 20% more insulin
+result = analyzer.analyze_intervention(
+    patient_data,
+    intervention_id="uuid-string",
+    analysis_type='dose',
+    dose_factor=1.2,  # 20% more insulin
+    before_minutes=120,
+    after_minutes=180
+)
+```
+
+#### Timing Counterfactuals
+
+Analyze "what if we gave insulin earlier/later?" scenarios:
+
+```python
+# Example: 30 minutes earlier
+result = analyzer.analyze_intervention(
+    patient_data,
+    intervention_id="uuid-string", 
+    analysis_type='timing',
+    timing_shift_minutes=-30,  # 30 min earlier
+    before_minutes=120,
+    after_minutes=180
+)
+```
+
+#### Counterfactual Data Format
+
+Counterfactual analysis adds new columns to the original data:
+
+- `cf{N}_insulin`: Modified insulin doses
+- `cf{N}_glucose`: Counterfactual glucose trajectories
+- `cf{N}_active_insulin`: Modified insulin activity
+- `cf{N}_carb_impact`: Modified carb impacts
+
+Metadata is stored in `DataFrame.attrs` with complete intervention details.
+
+### Integration with CRN Model
+
+#### Current Challenge: Treatment Encoding
+
+The CRN model expects **discrete one-hot encoded treatments**:
+```python
+# Current cancer model (4 discrete treatments)
+[1, 0, 0, 0] = No treatment
+[0, 1, 0, 0] = Chemotherapy only  
+[0, 0, 1, 0] = Radiotherapy only
+[0, 0, 0, 1] = Combined treatment
+```
+
+However, diabetes management involves **continuous treatment variables**:
+- **Insulin dose**: Continuous values (e.g., 4.9 units, 5.6 units)
+- **Insulin timing**: Continuous time shifts (e.g., -30 min, +15 min)
+
+#### Adaptation Strategy
+
+To integrate data-api with CRN, we need to:
+
+1. **Discretize Continuous Treatments**: Convert continuous insulin doses/timing into discrete bins
+2. **Modify Treatment Encoding**: Update `num_treatments` parameter and one-hot mapping
+3. **Replace Cancer Simulation**: Use data-api instead of `utils/cancer_simulation.py`
+4. **Update Outcome Variables**: Change from tumor volume to glucose trajectories
+
+#### Ground Truth Evaluation
+
+The data-api serves as the **ground truth simulator** for model evaluation:
+
+- **Training**: CRN learns from historical patient data (glucose, insulin, meals, etc.)
+- **Evaluation**: Compare CRN counterfactual predictions against data-api ground truth
+- **Metrics**: Glucose trajectory accuracy, hypoglycemia/hyperglycemia prediction
+
+### Clinical Applications
+
+The integrated system will enable personalized diabetes management:
+
+- **Insulin Dosing**: Optimize insulin-to-carb ratios for individual patients
+- **Meal Timing**: Analyze optimal insulin timing relative to meals
+- **Exercise Planning**: Predict glucose impact of exercise and adjust insulin accordingly
+- **Stress Management**: Account for stress-induced glucose variations
+
+### Next Steps for Integration
+
+1. **Treatment Discretization**: Implement binning strategy for continuous insulin variables
+2. **Data Preprocessing**: Create diabetes-specific data loading utilities  
+3. **Model Architecture**: Adapt CRN input layers for diabetes feature set
+4. **Evaluation Pipeline**: Implement ground truth comparison metrics using data-api
+
 ## Theoretical Foundation
 
 The method is theoretically grounded in:
