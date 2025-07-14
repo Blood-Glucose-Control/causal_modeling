@@ -31,6 +31,10 @@ class CRN_Model:
         self.learning_rate = hyperparams['learning_rate']
 
         self.b_train_decoder = b_train_decoder
+        
+        # New parameters for insulin encoding
+        self.treatment_encoding = params.get('treatment_encoding', 'onehot')  # 'onehot' or 'integer'
+        self.num_dose_levels = params.get('num_dose_levels', 4)  # For backward compatibility
 
         tf.compat.v1.reset_default_graph()
 
@@ -96,6 +100,29 @@ class CRN_Model:
 
         return treatment_prob_predictions
 
+    def build_treatment_assignments_regression(self, balancing_representation):
+        """
+        Regression-based adversary for ordinal insulin dose prediction.
+        
+        Uses MSE loss instead of cross-entropy to respect dose ordering.
+        Confusing dose 2 vs 3 is penalized less than 2 vs 5.
+        """
+        balancing_representation_gr = flip_gradient(balancing_representation, self.alpha)
+
+        # Custom dense layers for regression prediction
+        with tf.compat.v1.variable_scope("treatment_regression_hidden"):
+            W1 = tf.compat.v1.get_variable("weights", [self.br_size, self.fc_hidden_units])
+            b1 = tf.compat.v1.get_variable("bias", [self.fc_hidden_units])
+            treatments_network_layer = tf.nn.elu(tf.matmul(balancing_representation_gr, W1) + b1)
+            
+        with tf.compat.v1.variable_scope("treatment_regression_output"):
+            # Single output for regression (normalized dose level)
+            W2 = tf.compat.v1.get_variable("weights", [self.fc_hidden_units, 1])
+            b2 = tf.compat.v1.get_variable("bias", [1])
+            treatment_dose_predictions = tf.matmul(treatments_network_layer, W2) + b2
+
+        return treatment_dose_predictions
+
     def build_outcomes(self, balancing_representation,):
         current_treatments_reshape = tf.reshape(self.current_treatments, [-1, self.num_treatments])
 
@@ -116,12 +143,22 @@ class CRN_Model:
 
     def train(self, dataset_train, dataset_val, model_name, model_folder):
         self.balancing_representation = self.build_balancing_representation()
-        self.treatment_prob_predictions = self.build_treatment_assignments_one_hot(self.balancing_representation)
+        
+        # Choose adversarial head based on treatment encoding
+        if self.treatment_encoding == 'integer':
+            self.treatment_predictions = self.build_treatment_assignments_regression(self.balancing_representation)
+            self.loss_treatments = self.compute_loss_treatments_regression(
+                target_treatments=self.current_treatments,
+                treatment_predictions=self.treatment_predictions,
+                active_entries=self.active_entries)
+        else:  # Default to one-hot for backward compatibility
+            self.treatment_prob_predictions = self.build_treatment_assignments_one_hot(self.balancing_representation)
+            self.loss_treatments = self.compute_loss_treatments_one_hot(
+                target_treatments=self.current_treatments,
+                treatment_predictions=self.treatment_prob_predictions,
+                active_entries=self.active_entries)
+            
         self.predictions = self.build_outcomes(self.balancing_representation)
-
-        self.loss_treatments = self.compute_loss_treatments_one_hot(target_treatments=self.current_treatments,
-                                                                    treatment_predictions=self.treatment_prob_predictions,
-                                                                    active_entries=self.active_entries)
         self.loss_outcomes = self.compute_loss_predictions(self.outputs, self.predictions, self.active_entries)
         self.loss = self.loss_outcomes + self.loss_treatments
         optimizer = self.get_optimizer()
@@ -177,7 +214,13 @@ class CRN_Model:
 
     def load_model(self, model_name, model_folder):
         self.balancing_representation = self.build_balancing_representation()
-        self.treatment_prob_predictions = self.build_treatment_assignments_one_hot(self.balancing_representation)
+        
+        # Choose adversarial head based on treatment encoding
+        if self.treatment_encoding == 'integer':
+            self.treatment_predictions = self.build_treatment_assignments_regression(self.balancing_representation)
+        else:
+            self.treatment_prob_predictions = self.build_treatment_assignments_one_hot(self.balancing_representation)
+            
         self.predictions = self.build_outcomes(self.balancing_representation)
 
         tf_device = 'gpu'
@@ -234,13 +277,23 @@ class CRN_Model:
 
     def gen_epoch(self, dataset, batch_size, training_mode=True):
         dataset_size = dataset['current_covariates'].shape[0]
-        num_batches = int(dataset_size / batch_size) + 1
+        
+        # Handle case where dataset is smaller than batch size
+        if dataset_size <= batch_size:
+            num_batches = 1
+        else:
+            num_batches = int(dataset_size / batch_size) + 1
 
         for i in range(num_batches):
-            if (i == num_batches - 1):
-                batch_samples = range(dataset_size - batch_size, dataset_size)
+            if dataset_size <= batch_size:
+                # Use all data if dataset is smaller than batch size
+                batch_samples = range(dataset_size)
+            elif (i == num_batches - 1):
+                # Last batch: ensure we don't go negative
+                start_idx = max(0, dataset_size - batch_size)
+                batch_samples = range(start_idx, dataset_size)
             else:
-                batch_samples = range(i * batch_size, (i + 1) * batch_size)
+                batch_samples = range(i * batch_size, min((i + 1) * batch_size, dataset_size))
 
             if training_mode:
                 batch_current_covariates = dataset['current_covariates'][batch_samples, :, :]
@@ -435,6 +488,20 @@ class CRN_Model:
             (- target_treatments * tf.math.log(treatment_predictions + 1e-8)) * active_entries) \
                              / tf.reduce_sum(active_entries)
         return cross_entropy_loss
+
+    def compute_loss_treatments_regression(self, target_treatments, treatment_predictions, active_entries):
+        """
+        Compute MSE loss for regression-based treatment adversary.
+        
+        For integer-encoded insulin doses, this respects ordinality:
+        predicting dose 2 when true dose is 3 has lower loss than predicting dose 5.
+        """
+        treatment_predictions = tf.reshape(treatment_predictions, [-1, self.max_sequence_length, 1])
+        target_treatments = tf.reshape(target_treatments, [-1, self.max_sequence_length, 1])
+        
+        mse_loss = tf.reduce_sum(tf.square(target_treatments - treatment_predictions) * active_entries) \
+                   / tf.reduce_sum(active_entries)
+        return mse_loss
 
     def compute_loss_predictions(self, outputs, predictions, active_entries):
         predictions = tf.reshape(predictions, [-1, self.max_sequence_length, self.num_outputs])

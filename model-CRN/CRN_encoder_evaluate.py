@@ -9,7 +9,7 @@ from utils.evaluation_utils import write_results_to_file, load_trained_model, ge
 
 
 def fit_CRN_encoder(dataset_train, dataset_val, model_name, model_dir, hyperparams_file,
-                    b_hyperparam_opt):
+                    b_hyperparam_opt, treatment_encoding='onehot', num_dose_levels=4):
     _, length, num_covariates = dataset_train['current_covariates'].shape
     num_treatments = dataset_train['current_treatments'].shape[-1]
     num_outputs = dataset_train['outputs'].shape[-1]
@@ -19,7 +19,9 @@ def fit_CRN_encoder(dataset_train, dataset_val, model_name, model_dir, hyperpara
               'num_covariates': num_covariates,
               'num_outputs': num_outputs,
               'max_sequence_length': length,
-              'num_epochs': 100}
+              'num_epochs': 100,
+              'treatment_encoding': treatment_encoding,
+              'num_dose_levels': num_dose_levels}
 
     hyperparams = dict()
     num_simulations = 50
@@ -72,20 +74,21 @@ def fit_CRN_encoder(dataset_train, dataset_val, model_name, model_dir, hyperpara
 
 def test_CRN_encoder(pickle_map, models_dir,
                      encoder_model_name, encoder_hyperparams_file,
-                     b_encoder_hyperparm_tuning):
+                     b_encoder_hyperparm_tuning, treatment_encoding='onehot', num_dose_levels=4):
 
     training_data = pickle_map['training_data']
     validation_data = pickle_map['validation_data']
     test_data = pickle_map['test_data']
     scaling_data = pickle_map['scaling_data']
 
-    training_processed = get_processed_data(training_data, scaling_data)
-    validation_processed = get_processed_data(validation_data, scaling_data)
-    test_processed = get_processed_data(test_data, scaling_data)
+    training_processed = get_processed_data(training_data, scaling_data, treatment_encoding=treatment_encoding)
+    validation_processed = get_processed_data(validation_data, scaling_data, treatment_encoding=treatment_encoding)
+    test_processed = get_processed_data(test_data, scaling_data, treatment_encoding=treatment_encoding)
 
     fit_CRN_encoder(dataset_train=training_processed, dataset_val=validation_processed,
                     model_name=encoder_model_name, model_dir=models_dir,
-                    hyperparams_file=encoder_hyperparams_file, b_hyperparam_opt=b_encoder_hyperparm_tuning)
+                    hyperparams_file=encoder_hyperparams_file, b_hyperparam_opt=b_encoder_hyperparm_tuning,
+                    treatment_encoding=treatment_encoding, num_dose_levels=num_dose_levels)
 
     CRN_encoder = load_trained_model(validation_processed, encoder_hyperparams_file, encoder_model_name, models_dir)
     mean_mse, mse = CRN_encoder.evaluate_predictions(test_processed)
