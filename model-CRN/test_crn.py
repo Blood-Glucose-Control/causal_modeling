@@ -7,6 +7,7 @@ import logging
 from CRN_encoder_evaluate import test_CRN_encoder
 from CRN_decoder_evaluate import test_CRN_decoder
 from utils.cancer_simulation import get_cancer_sim_data
+from utils.diabetes_data_generator import get_diabetes_sim_data
 
 
 def init_arg():
@@ -47,13 +48,18 @@ if __name__ == '__main__':
             logging.warning("Integer encoding requested for cancer data. Switching to one-hot for compatibility.")
             args.treatment_encoding = "onehot"
     else:  # diabetes
-        # For now, use cancer data as placeholder until diabetes data pipeline is integrated
-        logging.info("Diabetes data type selected. Using cancer simulation as placeholder.")
-        logging.info("TODO: Integrate with diabetes data-api for actual diabetes data.")
-        pickle_map = get_cancer_sim_data(chemo_coeff=args.chemo_coeff, radio_coeff=args.radio_coeff, 
-                                        b_load=False, b_save=False, model_root=args.results_dir)
+        logging.info("Diabetes data type selected. Generating real diabetes data using data-api...")
+        pickle_map = get_diabetes_sim_data(
+            total_days=21,  # 3 weeks of patient data
+            window_days=7,  # 1 week training windows
+            seed=42,
+            b_load=False, 
+            b_save=False, 
+            model_root=args.results_dir
+        )
         # Force integer encoding for diabetes
         args.treatment_encoding = "integer"
+        logging.info(f"✓ Generated diabetes dataset with {pickle_map['training_data']['glucose'].shape[0]} training windows")
 
     encoder_model_name = 'encoder_' + args.model_name
     encoder_hyperparams_file = '{}/{}_best_hyperparams.txt'.format(args.results_dir, encoder_model_name)
