@@ -20,26 +20,28 @@ The project requires Python ≥3.7 and key dependencies:
 
 ## Project Context
 
-This codebase implements the **Counterfactual Recurrent Network (CRN)** from the ICLR 2020 paper "Estimating counterfactual treatment outcomes over time through adversarially balanced representations". The model was originally designed for cancer treatment planning with one-hot key encoded treatments, but it in the process of being adapted for **diabetes modeling** where the treatment is either insulin dose timing relative to meal, or it's insulin dosage strength, and the outcome is blood glucose over time, with relevant confounders in the time-series data being de-confounded. The training data will consist of historical data per patient, and evaluation on each training set will be done on the patient itself. I.e. the purpose is a personalized model per patient per their own history and data.
+This codebase implements the **Counterfactual Recurrent Network (CRN)** adapted for **diabetes management** and personalized insulin dosing. Originally based on the ICLR 2020 paper "Estimating counterfactual treatment outcomes over time through adversarially balanced representations", this implementation focuses specifically on diabetes modeling where the treatment is insulin dosage strength encoded as ordinal levels [1,2,3,4,5], and the outcome is blood glucose prediction over time.
+
+The model performs personalized diabetes management by learning treatment-invariant representations that enable counterfactual reasoning about insulin dosing decisions. Training data consists of historical glucose, insulin, meals, exercise, and stress patterns per patient, with evaluation focused on patient-specific glucose prediction and treatment effect estimation.
 
 ## Common Commands
 
 ### Training and Testing
 ```bash
-# Basic test with default hyperparameters
-uv run python test_crn.py --chemo_coeff=2 --radio_coeff=2 --model_name=crn_test_2
+# Train diabetes CRN with default settings
+uv run python train_diabetes_crn.py --days=14 --model_name=diabetes_v1
 
-# Run with hyperparameter tuning (takes ~8 hours on GPU)
-uv run python test_crn.py --chemo_coeff=2 --radio_coeff=2 --model_name=crn_test_2 --b_encoder_hyperparm_tuning=True --b_decoder_hyperparm_tuning=True
+# Train with hyperparameter search (recommended for best performance)
+uv run python train_diabetes_crn.py --days=30 --model_name=diabetes_v1 --hyperparameter_search
+
+# Quick integration test
+uv run python test_diabetes_simple.py
 ```
 
 ### Evaluation
 ```bash
-# Evaluate encoder separately
-uv run python CRN_encoder_evaluate.py
-
-# Evaluate decoder separately
-uv run python CRN_decoder_evaluate.py
+# The training script automatically evaluates the model
+# Results include glucose prediction MSE and balancing representation analysis
 ```
 
 ## Architecture Overview
@@ -65,72 +67,71 @@ The key innovation is using **domain adversarial training** to handle time-depen
 
 ### Key Components
 
-- **CRN_model.py**: Main model with encoder/decoder architecture
+- **CRN_model.py**: Main model with encoder architecture and regression adversarial head
 - **Domain Adversarial Training**: Uses gradient reversal to create treatment-invariant representations
-- **Sequence-to-Sequence**: Handles variable-length patient histories and future treatment sequences
-- **Cancer Simulation** (`utils/cancer_simulation.py`): Generates synthetic data with controllable confounding for the cancer usecase
+- **Sequence-to-Sequence**: Handles variable-length patient glucose histories and insulin sequences
+- **Diabetes Data API** (`diabetes-data-api/main.py`): Generates realistic diabetes data with counterfactual analysis
 
-### Medical Applications
+### Diabetes Applications
 
-The model addresses critical clinical questions:
-- **Treatment Selection**: Which treatment to give at each timestep
-- **Treatment Timing**: When to start/stop treatments
-- **Treatment Sequencing**: Optimal sequences of multiple treatments over time
+The model addresses critical diabetes management questions:
+- **Insulin Dosing**: Optimal insulin dose levels [1,2,3,4,5] for given glucose/meal patterns
+- **Glucose Prediction**: Forecasting blood glucose response to insulin interventions
+- **Counterfactual Analysis**: "What if" scenarios for dose adjustments and timing changes
 
 ### Key Parameters
 
-- `chemo_coeff`/`radio_coeff`: Control time-dependent confounding strength (1-5)
-- `br_size`: Balanced representation dimensionality
-- `lambda`: Trade-off between domain discrimination and outcome prediction
-- `max_sequence_length`: Maximum timesteps for sequence modeling
+- `br_size`: Balanced representation dimensionality (default: 12)
+- `rnn_hidden_units`: LSTM hidden units for temporal modeling (default: 24)
+- `max_sequence_length`: Maximum timesteps for sequence modeling (default: 60)
+- `num_dose_levels`: Number of ordinal insulin dose categories (default: 5)
 
 ### Data Generation
 
-The cancer simulation model generates >1GB synthetic datasets per configuration with:
-- Realistic pharmacokinetic-pharmacodynamic tumor growth dynamics
-- Configurable selection bias and time-dependent confounding
-- Ground truth counterfactuals for evaluation
+The diabetes data API generates realistic synthetic patient data with:
+- Physiologically-based glucose dynamics and insulin action curves
+- Realistic meal patterns, exercise, and stress effects
+- Configurable patient parameters and treatment policies
+- Ground truth counterfactuals for dose and timing modifications
 
 ### Model Persistence
 
-- Trained models saved in `results/crn_models/` as TensorFlow checkpoints
-- Hyperparameters logged in `results/` as text files
-- Separate encoder/decoder model files with naming convention: `{encoder/decoder}_{model_name}_final.ckpt.*`
+- Trained models saved in `results/diabetes_models/` as TensorFlow checkpoints
+- Hyperparameters logged in `results/` as pickle files
+- Model files with naming convention: `{model_name}_final.ckpt.*`
 
 ## Treatment Encodings and Data Architecture
 
 ### Treatment Encoding System
 
-The CRN uses **one-hot encoding** for treatments with 4 possible treatment options:
+The CRN uses **integer encoding** for ordinal insulin dose levels:
 
 ```python
-# Treatment encoding in utils/evaluation_utils.py:73-88
-[1, 0, 0, 0] = No treatment
-[0, 1, 0, 0] = Chemotherapy only  
-[0, 0, 1, 0] = Radiotherapy only
-[0, 0, 0, 1] = Combined chemotherapy + radiotherapy
+# Treatment encoding in utils/insulin_encoding.py
+1 = Very low dose (0.5-2.0 units)
+2 = Low dose (2.0-4.0 units)  
+3 = Moderate dose (4.0-6.0 units)
+4 = High dose (6.0-8.0 units)
+5 = Very high dose (8.0+ units)
 ```
 
 The model architecture expects:
-- `num_treatments` = 4 (configurable parameter)
-- Treatment tensors: `[batch_size, max_sequence_length, num_treatments]`
-- Previous and current treatment placeholders in `CRN_model.py:40-41`
+- `num_treatments` = 1 (single integer value)
+- Treatment tensors: `[batch_size, max_sequence_length, 1]`
+- Regression adversarial head with MSE loss for ordinality
 
-### Data-Specific Components (Cancer Domain)
+### Diabetes-Specific Components
 
-**Located in `utils/cancer_simulation.py`:**
-- **Treatment Assignment Logic**: Sigmoid probabilities based on tumor diameter over 15-day windows
-- **Pharmacokinetic Model**: Chemotherapy concentration with exponential decay (half-life modeling)
-- **Tumor Growth Dynamics**: Gompertz growth model with treatment effects
-- **Patient Heterogeneity**: Cancer stage distributions (I, II, IIIA, IIIB, IV) 
-- **Confounding Parameters**: `chemo_coeff`/`radio_coeff` control treatment selection bias
-- **Outcome Variables**: Tumor volume (continuous), death threshold at 13cm diameter
+**Located in `utils/insulin_encoding.py`:**
+- **InsulinEncoder**: Converts continuous doses to discrete ordinal levels
+- **DiabetesDataProcessor**: Transforms diabetes data to CRN sequence format
+- **Dose Discretization**: Clinical dose ranges mapped to integer levels
+- **Sequence Processing**: Creates glucose prediction sequences around insulin events
 
-**Domain-Specific Constants:**
-- `tumour_cell_density = 5.8 * 10^8 cells/cm³`
-- `tumour_death_threshold = calc_volume(13)` 
-- Cancer stage size distributions from medical literature
-- Drug half-life and dosing parameters
+**Located in `diabetes-data-api/main.py`:**
+- **GlucoseSimulator**: Physiologically-based glucose dynamics
+- **CounterfactualAnalyzer**: Dose and timing counterfactual generation
+- **DiabetesAnalyzer**: Main interface for data generation and analysis
 
 ### General/Reusable Components
 

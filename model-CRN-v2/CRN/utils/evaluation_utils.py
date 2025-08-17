@@ -1,157 +1,250 @@
-# Copyright (c) 2020, Ioana Bica
+# Copyright (c) 2024, Diabetes CRN Adaptation
+# Evaluation utilities for diabetes CRN modeling
 
 import numpy as np
 import pandas as pd
+import pickle
+import os
 
 from CRN_model import CRN_Model
 
-import pickle
-
 
 def write_results_to_file(filename, data):
+    """Write results to pickle file."""
     with open(filename, 'wb') as handle:
         pickle.dump(data, handle, protocol=2)
 
+
 def append_results_to_file(filename, data):
+    """Append results to pickle file."""
     with open(filename, 'a+b') as handle:
         pickle.dump(data, handle, protocol=2)
 
 
 def load_trained_model(dataset_test, hyperparams_file, model_name, model_folder, b_decoder_model=False):
+    """Load a trained CRN model for diabetes."""
     _, length, num_covariates = dataset_test['current_covariates'].shape
-    num_treatments = dataset_test['current_treatments'].shape[-1]
+    num_treatments = dataset_test['current_treatments'].shape[-1]  # Should be 1 for diabetes
     num_outputs = dataset_test['outputs'].shape[-1]
 
-    params = {'num_treatments': num_treatments,
-              'num_covariates': num_covariates,
-              'num_outputs': num_outputs,
-              'max_sequence_length': length,
-              'num_epochs': 100}
+    params = {
+        'num_treatments': num_treatments,
+        'num_covariates': num_covariates,
+        'num_outputs': num_outputs,
+        'max_sequence_length': length,
+        'num_epochs': 100
+    }
 
     print("Loading best hyperparameters for model")
     with open(hyperparams_file, 'rb') as handle:
         best_hyperparams = pickle.load(handle)
 
-    model = CRN_Model(params, best_hyperparams)
-    if (b_decoder_model):
-        model = CRN_Model(params, best_hyperparams, b_train_decoder=True)
-
+    model = CRN_Model(params, best_hyperparams, b_train_decoder=b_decoder_model)
     model.load_model(model_name=model_name, model_folder=model_folder)
     return model
 
 
-def get_processed_data(raw_sim_data,
-                       scaling_params):
+def process_diabetes_data_for_crn(patient_data, max_sequence_length=60):
     """
-    Create formatted data to train both encoder and seq2seq atchitecture.
+    Process diabetes data from data-api for CRN training.
+    
+    Args:
+        patient_data: DataFrame from DiabetesAnalyzer.generate_patient_data()
+        max_sequence_length: Maximum sequence length for CRN
+        
+    Returns:
+        Tuple of (training_data, validation_data, test_data) dictionaries
     """
-    mean, std = scaling_params
-
-    horizon = 1
-    offset = 1
-
-    mean['chemo_application'] = 0
-    mean['radio_application'] = 0
-    std['chemo_application'] = 1
-    std['radio_application'] = 1
-
-    input_means = mean[
-        ['cancer_volume', 'patient_types', 'chemo_application', 'radio_application']].values.flatten()
-    input_stds = std[['cancer_volume', 'patient_types', 'chemo_application', 'radio_application']].values.flatten()
-
-    # Continuous values
-    cancer_volume = (raw_sim_data['cancer_volume'] - mean['cancer_volume']) / std['cancer_volume']
-    patient_types = (raw_sim_data['patient_types'] - mean['patient_types']) / std['patient_types']
-
-    patient_types = np.stack([patient_types for t in range(cancer_volume.shape[1])], axis=1)
-
-    # Binary application
-    chemo_application = raw_sim_data['chemo_application']
-    radio_application = raw_sim_data['radio_application']
-    sequence_lengths = raw_sim_data['sequence_lengths']
-
-    # Convert treatments to one-hot encoding
-
-    treatments = np.concatenate(
-        [chemo_application[:, :-offset, np.newaxis], radio_application[:, :-offset, np.newaxis]], axis=-1)
-
-    one_hot_treatments = np.zeros(shape=(treatments.shape[0], treatments.shape[1], 4))
-    for patient_id in range(treatments.shape[0]):
-        for timestep in range(treatments.shape[1]):
-            if (treatments[patient_id][timestep][0] == 0 and treatments[patient_id][timestep][1] == 0):
-                one_hot_treatments[patient_id][timestep] = [1, 0, 0, 0]
-            elif (treatments[patient_id][timestep][0] == 1 and treatments[patient_id][timestep][1] == 0):
-                one_hot_treatments[patient_id][timestep] = [0, 1, 0, 0]
-            elif (treatments[patient_id][timestep][0] == 0 and treatments[patient_id][timestep][1] == 1):
-                one_hot_treatments[patient_id][timestep] = [0, 0, 1, 0]
-            elif (treatments[patient_id][timestep][0] == 1 and treatments[patient_id][timestep][1] == 1):
-                one_hot_treatments[patient_id][timestep] = [0, 0, 0, 1]
-
-    one_hot_previous_treatments = one_hot_treatments[:, :-1, :]
-
-    current_covariates = np.concatenate(
-        [cancer_volume[:, :-offset, np.newaxis], patient_types[:, :-offset, np.newaxis]], axis=-1)
-    outputs = cancer_volume[:, horizon:, np.newaxis]
-
-    output_means = mean[['cancer_volume']].values.flatten()[0]  # because we only need scalars here
-    output_stds = std[['cancer_volume']].values.flatten()[0]
-
-    print(outputs.shape)
-
-    # Add active entires
-    active_entries = np.zeros(outputs.shape)
-
-    for i in range(sequence_lengths.shape[0]):
-        sequence_length = int(sequence_lengths[i])
-        active_entries[i, :sequence_length, :] = 1
-
-    raw_sim_data['current_covariates'] = current_covariates
-    raw_sim_data['previous_treatments'] = one_hot_previous_treatments
-    raw_sim_data['current_treatments'] = one_hot_treatments
-    raw_sim_data['outputs'] = outputs
-    raw_sim_data['active_entries'] = active_entries
-
-    raw_sim_data['unscaled_outputs'] = (outputs * std['cancer_volume'] + mean['cancer_volume'])
-    raw_sim_data['input_means'] = input_means
-    raw_sim_data['inputs_stds'] = input_stds
-    raw_sim_data['output_means'] = output_means
-    raw_sim_data['output_stds'] = output_stds
-
-    return raw_sim_data
+    import sys
+    import os
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'Counterfactual-Recurrent-Network'))
+    from utils.insulin_encoding import InsulinEncoder, DiabetesDataProcessor
+    
+    # Initialize encoder and processor
+    insulin_encoder = InsulinEncoder(num_dose_levels=5)
+    processor = DiabetesDataProcessor(insulin_encoder, max_sequence_length=max_sequence_length)
+    
+    # Process the data
+    processed_data = processor.process_patient_data(patient_data)
+    
+    # Split data into train/validation/test (70/15/15 split)
+    num_sequences = processed_data['current_covariates'].shape[0]
+    train_end = int(0.7 * num_sequences)
+    val_end = int(0.85 * num_sequences)
+    
+    def split_dataset(data_dict, start_idx, end_idx):
+        return {key: value[start_idx:end_idx] for key, value in data_dict.items()}
+    
+    training_data = split_dataset(processed_data, 0, train_end)
+    validation_data = split_dataset(processed_data, train_end, val_end)
+    test_data = split_dataset(processed_data, val_end, num_sequences)
+    
+    return training_data, validation_data, test_data
 
 
-def get_mse_at_follow_up_time(mean, output, active_entires):
-        mses = np.sum(np.sum((mean - output) ** 2 * active_entires, axis=-1), axis=0) \
-               / active_entires.sum(axis=0).sum(axis=-1)
-
-        return pd.Series(mses, index=[idx for idx in range(len(mses))])
-
-
-def train_BR_optimal_model(dataset_train, dataset_val, hyperparams_file, model_name, model_folder,
-                           b_decoder_model=False):
-    _, length, num_covariates = dataset_train['current_covariates'].shape
-    num_treatments = dataset_train['current_treatments'].shape[-1]
-    num_outputs = dataset_train['outputs'].shape[-1]
-
-    params = {'num_treatments': num_treatments,
-              'num_covariates': num_covariates,
-              'num_outputs': num_outputs,
-              'max_sequence_length': length,
-              'num_epochs': 100}
-
-    print("Loading best hyperparameters for model")
-    with open(hyperparams_file, 'rb') as handle:
-        best_hyperparams = pickle.load(handle)
-
-    print("Best Hyperparameters")
-    print(best_hyperparams)
-
-    if (b_decoder_model):
-        print(best_hyperparams)
-        model = CRN_Model(params, best_hyperparams, b_train_decoder=True)
-    else:
-        model = CRN_Model(params, best_hyperparams)
-    model.train(dataset_train, dataset_val, model_name=model_name, model_folder=model_folder)
+def get_diabetes_crn_params(max_sequence_length=60):
+    """
+    Get CRN parameters for diabetes modeling.
+    
+    Args:
+        max_sequence_length: Maximum sequence length
+        
+    Returns:
+        Dictionary with CRN model parameters
+    """
+    return {
+        'num_covariates': 4,  # glucose, carbs, exercise, stress
+        'num_outputs': 1,     # glucose prediction
+        'num_treatments': 1,  # insulin dose (integer encoding)
+        'max_sequence_length': max_sequence_length,
+        'num_epochs': 100
+    }
 
 
+def get_default_hyperparams():
+    """Get default hyperparameters for diabetes CRN training."""
+    return {
+        'rnn_hidden_units': 24,
+        'br_size': 12,
+        'fc_hidden_units': 36,
+        'learning_rate': 0.01,
+        'batch_size': 64,
+        'rnn_keep_prob': 0.9
+    }
 
+
+def train_diabetes_crn(patient_data, model_name, model_folder, 
+                      max_sequence_length=60, hyperparams=None):
+    """
+    Train CRN model on diabetes data.
+    
+    Args:
+        patient_data: DataFrame from DiabetesAnalyzer.generate_patient_data()
+        model_name: Name for saving the model
+        model_folder: Folder for saving the model
+        max_sequence_length: Maximum sequence length
+        hyperparams: Hyperparameters dict (uses defaults if None)
+        
+    Returns:
+        Tuple of (trained_model, test_data)
+    """
+    # Process data
+    training_data, validation_data, test_data = process_diabetes_data_for_crn(
+        patient_data, max_sequence_length=max_sequence_length
+    )
+    
+    # Get model parameters
+    params = get_diabetes_crn_params(max_sequence_length=max_sequence_length)
+    
+    # Use default hyperparameters if none provided
+    if hyperparams is None:
+        hyperparams = get_default_hyperparams()
+    
+    # Create results directory
+    os.makedirs(model_folder, exist_ok=True)
+    
+    # Create and train model
+    model = CRN_Model(params, hyperparams)
+    model.train(training_data, validation_data, model_name=model_name, model_folder=model_folder)
+    
+    return model, test_data
+
+
+def evaluate_diabetes_model(model, test_data):
+    """
+    Evaluate trained diabetes CRN model.
+    
+    Args:
+        model: Trained CRN_Model instance
+        test_data: Test dataset dictionary
+        
+    Returns:
+        Dictionary with evaluation metrics
+    """
+    # Get predictions
+    test_mse, mse_by_timestep = model.evaluate_predictions(test_data)
+    
+    # Get balancing representations for analysis
+    balancing_reps = model.get_balancing_reps(test_data)
+    
+    return {
+        'test_mse': test_mse,
+        'mse_by_timestep': mse_by_timestep,
+        'balancing_representations': balancing_reps
+    }
+
+
+def hyperparameter_search(patient_data, model_name, model_folder, 
+                         search_space=None, max_sequence_length=60):
+    """
+    Perform hyperparameter search for diabetes CRN.
+    
+    Args:
+        patient_data: DataFrame from DiabetesAnalyzer.generate_patient_data()
+        model_name: Base name for saving models
+        model_folder: Folder for saving models
+        search_space: Dictionary defining hyperparameter ranges
+        max_sequence_length: Maximum sequence length
+        
+    Returns:
+        Dictionary with best hyperparameters and performance
+    """
+    if search_space is None:
+        search_space = {
+            'rnn_hidden_units': [16, 24, 32],
+            'br_size': [8, 12, 16],
+            'fc_hidden_units': [24, 36, 48],
+            'learning_rate': [0.001, 0.01, 0.02],
+            'batch_size': [32, 64, 128],
+            'rnn_keep_prob': [0.8, 0.9, 0.95]
+        }
+    
+    # Process data once
+    training_data, validation_data, test_data = process_diabetes_data_for_crn(
+        patient_data, max_sequence_length=max_sequence_length
+    )
+    
+    params = get_diabetes_crn_params(max_sequence_length=max_sequence_length)
+    
+    best_mse = float('inf')
+    best_hyperparams = None
+    
+    # Simple grid search (can be replaced with more sophisticated methods)
+    import itertools
+    
+    keys = list(search_space.keys())
+    values = list(search_space.values())
+    
+    for combination in itertools.product(*values):
+        hyperparams = dict(zip(keys, combination))
+        
+        print(f"Testing hyperparams: {hyperparams}")
+        
+        # Train model with current hyperparameters
+        model = CRN_Model(params, hyperparams)
+        model.train(training_data, validation_data, 
+                   model_name=f"{model_name}_search", model_folder=model_folder)
+        
+        # Evaluate on validation set
+        val_mse, _ = model.evaluate_predictions(validation_data)
+        
+        print(f"Validation MSE: {val_mse:.4f}")
+        
+        if val_mse < best_mse:
+            best_mse = val_mse
+            best_hyperparams = hyperparams.copy()
+            print(f"New best MSE: {best_mse:.4f}")
+    
+    # Save best hyperparameters
+    hyperparams_file = os.path.join(model_folder, f"{model_name}_best_hyperparams.pkl")
+    with open(hyperparams_file, 'wb') as handle:
+        pickle.dump(best_hyperparams, handle)
+    
+    print(f"Best hyperparameters: {best_hyperparams}")
+    print(f"Best validation MSE: {best_mse:.4f}")
+    
+    return {
+        'best_hyperparams': best_hyperparams,
+        'best_mse': best_mse,
+        'hyperparams_file': hyperparams_file
+    }

@@ -15,9 +15,9 @@ import logging
 
 class CRN_Model:
     def __init__(self, params, hyperparams, b_train_decoder=False):
-        self.num_treatments = params['num_treatments']
-        self.num_covariates = params['num_covariates']
-        self.num_outputs = params['num_outputs']
+        self.num_treatments = params['num_treatments']  # Always 1 for diabetes (integer encoding)
+        self.num_covariates = params['num_covariates']  # glucose, carbs, exercise, stress
+        self.num_outputs = params['num_outputs']        # glucose prediction
         self.max_sequence_length = params['max_sequence_length']
         self.num_epochs = params['num_epochs']
 
@@ -73,15 +73,28 @@ class CRN_Model:
 
         return balancing_representation
 
-    def build_treatment_assignments_one_hot(self, balancing_representation):
+    def build_treatment_assignments(self, balancing_representation):
+        """
+        Regression-based adversarial head for ordinal insulin dosage levels.
+        
+        Uses single-output regression to predict ordinal dose levels [1,2,3,4,5]. 
+        MSE loss naturally respects ordinality: confusing dose 2 vs 3 is less 
+        penalized than 2 vs 5.
+        
+        Args:
+            balancing_representation: Treatment-invariant representations from encoder
+            
+        Returns:
+            Continuous treatment predictions for ordinal dose levels
+        """
         balancing_representation_gr = flip_gradient(balancing_representation, self.alpha)
 
         treatments_network_layer = tf_v1.layers.dense(balancing_representation_gr, self.fc_hidden_units,
-                                                   activation=tf_v1.nn.elu)
-        treatment_logit_predictions = tf_v1.layers.dense(treatments_network_layer, self.num_treatments, activation=None)
-        treatment_prob_predictions = tf_v1.nn.softmax(treatment_logit_predictions)
+                                                   activation=tf_v1.nn.elu, name='treatment_fc')
+        treatment_predictions = tf_v1.layers.dense(treatments_network_layer, 1, activation=None,
+                                                 name='treatment_output')
 
-        return treatment_prob_predictions
+        return treatment_predictions
 
     def build_outcomes(self, balancing_representation,):
         current_treatments_reshape = tf_v1.reshape(self.current_treatments, [-1, self.num_treatments])
@@ -95,12 +108,12 @@ class CRN_Model:
 
     def train(self, dataset_train, dataset_val, model_name, model_folder):
         self.balancing_representation = self.build_balancing_representation()
-        self.treatment_prob_predictions = self.build_treatment_assignments_one_hot(self.balancing_representation)
+        self.treatment_predictions = self.build_treatment_assignments(self.balancing_representation)
         self.predictions = self.build_outcomes(self.balancing_representation)
 
-        self.loss_treatments = self.compute_loss_treatments_one_hot(target_treatments=self.current_treatments,
-                                                                    treatment_predictions=self.treatment_prob_predictions,
-                                                                    active_entries=self.active_entries)
+        self.loss_treatments = self.compute_loss_treatments(target_treatments=self.current_treatments,
+                                                          treatment_predictions=self.treatment_predictions,
+                                                          active_entries=self.active_entries)
         self.loss_outcomes = self.compute_loss_predictions(self.outputs, self.predictions, self.active_entries)
         self.loss = self.loss_outcomes + self.loss_treatments
         optimizer = self.get_optimizer()
@@ -156,7 +169,7 @@ class CRN_Model:
 
     def load_model(self, model_name, model_folder):
         self.balancing_representation = self.build_balancing_representation()
-        self.treatment_prob_predictions = self.build_treatment_assignments_one_hot(self.balancing_representation)
+        self.treatment_predictions = self.build_treatment_assignments(self.balancing_representation)
         self.predictions = self.build_outcomes(self.balancing_representation)
 
         tf_device = 'gpu'
@@ -175,10 +188,6 @@ class CRN_Model:
                               batch_current_treatments, batch_init_state,
                               batch_outputs=None, batch_active_entries=None,
                               alpha_current=1.0, lr_current=0.01, training_mode=True):
-        batch_size = batch_previous_treatments.shape[0]
-        zero_init_treatment = np.zeros(shape=[batch_size, 1, self.num_treatments])
-        new_batch_previous_treatments = np.concatenate([zero_init_treatment, batch_previous_treatments], axis=1)
-
         if training_mode:
             if self.b_train_decoder:
                 feed_dict = {self.current_covariates: batch_current_covariates,
@@ -191,7 +200,7 @@ class CRN_Model:
 
             else:
                 feed_dict = {self.current_covariates: batch_current_covariates,
-                             self.previous_treatments: new_batch_previous_treatments,
+                             self.previous_treatments: batch_previous_treatments,
                              self.current_treatments: batch_current_treatments,
                              self.outputs: batch_outputs,
                              self.active_entries: batch_active_entries,
@@ -205,7 +214,7 @@ class CRN_Model:
                              self.alpha: alpha_current}
             else:
                 feed_dict = {self.current_covariates: batch_current_covariates,
-                             self.previous_treatments: new_batch_previous_treatments,
+                             self.previous_treatments: batch_previous_treatments,
                              self.current_treatments: batch_current_treatments,
                              self.alpha: alpha_current}
 
@@ -408,12 +417,36 @@ class CRN_Model:
 
         return predicted_outputs
 
-    def compute_loss_treatments_one_hot(self, target_treatments, treatment_predictions, active_entries):
-        treatment_predictions = tf_v1.reshape(treatment_predictions, [-1, self.max_sequence_length, self.num_treatments])
-        cross_entropy_loss = tf_v1.reduce_sum(
-            (- target_treatments * tf_v1.log(treatment_predictions + 1e-8)) * active_entries) \
-            / tf_v1.reduce_sum(active_entries)
-        return cross_entropy_loss
+    def compute_loss_treatments(self, target_treatments, treatment_predictions, active_entries):
+        """
+        MSE loss for regression-based adversarial training with ordinal treatments.
+        
+        Target treatments should be integer dose levels [1,2,3,4,5].
+        MSE loss naturally encodes ordinality: error between doses 2 and 3 
+        is smaller than error between doses 2 and 5.
+        
+        Args:
+            target_treatments: Integer dose levels [batch_size, seq_len, 1]
+            treatment_predictions: Continuous predictions [batch_size, seq_len, 1]
+            active_entries: Mask for valid entries [batch_size, seq_len, 1]
+            
+        Returns:
+            MSE loss between target and predicted dose levels
+        """
+        # Reshape predictions to match target format
+        treatment_predictions = tf_v1.reshape(treatment_predictions, [-1, self.max_sequence_length, 1])
+        
+        # For integer encoding, target_treatments should be [batch_size, seq_len, 1]
+        # Ensure proper shape matching
+        if target_treatments.shape[-1] != 1:
+            # If target_treatments has multiple dimensions, take first dimension
+            target_treatments = tf_v1.expand_dims(target_treatments[:, :, 0], axis=-1)
+        
+        # Compute MSE loss
+        mse_loss = tf_v1.reduce_sum(tf_v1.square(target_treatments - treatment_predictions) * active_entries) \
+                   / tf_v1.reduce_sum(active_entries)
+        
+        return mse_loss
 
     def compute_loss_predictions(self, outputs, predictions, active_entries):
         predictions = tf_v1.reshape(predictions, [-1, self.max_sequence_length, self.num_outputs])

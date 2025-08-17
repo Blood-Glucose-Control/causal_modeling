@@ -10,6 +10,7 @@ dependencies = [
     "scikit-learn>=0.22.2",
     "tensorflow-macos>=2.0",
     "matplotlib>=3.0",
+    "plotly>=5.0",
 ]
 
 [tool.hatch.build.targets.wheel]
