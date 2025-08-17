@@ -28,20 +28,23 @@ The model performs personalized diabetes management by learning treatment-invari
 
 ### Training and Testing
 ```bash
-# Train diabetes CRN with default settings
-uv run python train_diabetes_crn.py --days=14 --model_name=diabetes_v1
+# Test the unified n-step prediction API
+uv run python test_unified_prediction.py
 
-# Train with hyperparameter search (recommended for best performance)
-uv run python train_diabetes_crn.py --days=30 --model_name=diabetes_v1 --hyperparameter_search
+# Run comprehensive counterfactual evaluation comparing different prediction horizons
+uv run python unified_evaluation.py
 
-# Quick integration test
-uv run python test_diabetes_simple.py
+# The evaluation tests:
+# - n=1: One-step prediction (immediate glucose response)
+# - n=6: 6-step prediction (30-minute glucose trajectory) 
+# - n=12: 12-step prediction (1-hour glucose trajectory)
 ```
 
 ### Evaluation
 ```bash
-# The training script automatically evaluates the model
-# Results include glucose prediction MSE and balancing representation analysis
+# Unified evaluation system tests counterfactual glucose prediction accuracy
+# Compares CRN predictions vs ground truth from diabetes-data-api
+# Evaluates both dose counterfactuals and timing counterfactuals
 ```
 
 ## Architecture Overview

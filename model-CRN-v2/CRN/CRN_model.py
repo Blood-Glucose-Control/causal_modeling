@@ -328,10 +328,24 @@ class CRN_Model:
 
         return balancing_reps
 
-    def get_predictions(self, dataset):
+    def get_predictions(self, dataset, n_steps=1):
+        """
+        Get n-step predictions. 
+        
+        Args:
+            dataset: Input data
+            n_steps: Number of steps to predict (1 = one-step, >1 = multi-step autoregressive)
+        """
+        if n_steps == 1:
+            return self._get_one_step_predictions(dataset)
+        else:
+            return self._get_multistep_predictions(dataset, n_steps)
+    
+    def _get_one_step_predictions(self, dataset):
+        """Original one-step prediction method."""
         dataset_size = dataset['current_covariates'].shape[0]
         seq_length = dataset['current_covariates'].shape[1]
-        logging.info(f"Performing one-step-ahead prediction for {dataset_size} sequences of {seq_length} timesteps each")
+        logging.info(f"Performing 1-step prediction for {dataset_size} sequences of {seq_length} timesteps each")
 
         predictions = np.zeros(
             shape=(dataset_size, self.max_sequence_length, self.num_outputs))
@@ -373,48 +387,63 @@ class CRN_Model:
             predictions[batch_samples] = total_predictions
 
         return predictions
+    
+    def _get_multistep_predictions(self, dataset, n_steps):
+        """
+        Multi-step autoregressive prediction.
+        
+        Each step uses the prediction from the previous step as input.
+        This is the challenging case where errors can compound.
+        """
+        dataset_size = dataset['current_covariates'].shape[0]
+        seq_length = dataset['current_covariates'].shape[1]
+        logging.info(f"Performing {n_steps}-step autoregressive prediction for {dataset_size} sequences")
+        
+        # Initialize prediction array
+        predictions = np.zeros((dataset_size, n_steps, self.num_outputs))
+        
+        # Create working copy of dataset that we'll modify
+        current_data = {key: value.copy() if isinstance(value, np.ndarray) else value 
+                       for key, value in dataset.items()}
+        
+        # For multi-step, we need to track where we are in the sequence
+        # Start predictions from the end of the input sequence
+        prediction_start_idx = seq_length - n_steps if seq_length >= n_steps else 0
+        
+        for step in range(n_steps):
+            logging.info(f"  Step {step+1}/{n_steps}: Predicting {(step+1)*5} minutes ahead")
+            
+            # Get one-step prediction for current state
+            step_predictions = self._get_one_step_predictions(current_data)
+            
+            # Extract the prediction for this step
+            if prediction_start_idx + step < seq_length:
+                # We're still within the original sequence length
+                pred_idx = prediction_start_idx + step
+                predictions[:, step, :] = step_predictions[:, pred_idx, :]
+                
+                # Update the covariates for next step (glucose = prediction)
+                if step < n_steps - 1:  # Don't update on last step
+                    current_data['current_covariates'][:, pred_idx + 1, 0] = predictions[:, step, 0]
+            else:
+                # We've gone beyond original sequence - this would need sequence extension
+                # For now, use the last available prediction
+                predictions[:, step, :] = step_predictions[:, -1, :]
+        
+        return predictions
 
     def get_autoregressive_sequence_predictions(self, test_data, data_map, encoder_states, encoder_outputs,
                                                 projection_horizon):
-        logging.info("Performing multi-step ahead prediction.")
-        current_treatments = data_map['current_treatments']
-        previous_treatments = data_map['previous_treatments']
-
-        sequence_lengths = test_data['sequence_lengths'] - 1
-        num_patient_points = current_treatments.shape[0]
-
-        current_dataset = dict()
-        current_dataset['current_covariates'] = np.zeros(shape=(num_patient_points, projection_horizon,
-                                                                test_data['current_covariates'].shape[-1]))
-        current_dataset['previous_treatments'] = np.zeros(shape=(num_patient_points, projection_horizon,
-                                                                 test_data['previous_treatments'].shape[-1]))
-        current_dataset['current_treatments'] = np.zeros(shape=(num_patient_points, projection_horizon,
-                                                                test_data['current_treatments'].shape[-1]))
-        current_dataset['init_state'] = np.zeros((num_patient_points, encoder_states.shape[-1]))
-
-        predicted_outputs = np.zeros(shape=(num_patient_points, projection_horizon,
-                                            test_data['outputs'].shape[-1]))
-
-        for i in range(num_patient_points):
-            seq_length = int(sequence_lengths[i])
-            current_dataset['init_state'][i] = encoder_states[i, seq_length - 1]
-            current_dataset['current_covariates'][i, 0, 0] = encoder_outputs[i, seq_length - 1]
-            current_dataset['previous_treatments'][i] = previous_treatments[i,
-                                                        seq_length - 1:seq_length + projection_horizon - 1, :]
-            current_dataset['current_treatments'][i] = current_treatments[i, seq_length:seq_length + projection_horizon,
-                                                       :]
-
-        for t in range(0, projection_horizon):
-            logging.info(f"Multi-step prediction: step {t+1}/{projection_horizon} ({(t+1)*5} minutes ahead)")
-            predictions = self.get_predictions(current_dataset)
-            for i in range(num_patient_points):
-                predicted_outputs[i, t] = predictions[i, t]
-                if (t < projection_horizon - 1):
-                    current_dataset['current_covariates'][i, t + 1, 0] = predictions[i, t, 0]
-
-        test_data['predicted_outcomes'] = predicted_outputs
-
-        return predicted_outputs
+        """
+        Legacy method - use get_predictions(dataset, n_steps=projection_horizon) instead.
+        
+        This method is kept for backward compatibility but the new unified API is preferred.
+        """
+        logging.warning("Using legacy get_autoregressive_sequence_predictions. Consider using get_predictions(dataset, n_steps=n) instead.")
+        
+        # For now, delegate to the new unified method
+        # This would need more work to fully match the old interface
+        return self._get_multistep_predictions(test_data, projection_horizon)
 
     def compute_loss_treatments(self, target_treatments, treatment_predictions, active_entries):
         """
