@@ -222,13 +222,11 @@ class CRN_Model:
 
     def gen_epoch(self, dataset, batch_size, training_mode=True):
         dataset_size = dataset['current_covariates'].shape[0]
-        num_batches = int(dataset_size / batch_size) + 1
-
-        for i in range(num_batches):
-            if (i == num_batches - 1):
-                batch_samples = range(dataset_size - batch_size, dataset_size)
-            else:
-                batch_samples = range(i * batch_size, (i + 1) * batch_size)
+        
+        # Simple, clean batching: no overlaps, no negative indices
+        for start_idx in range(0, dataset_size, batch_size):
+            end_idx = min(start_idx + batch_size, dataset_size)
+            batch_samples = range(start_idx, end_idx)
 
             if training_mode:
                 batch_current_covariates = dataset['current_covariates'][batch_samples, :, :]
@@ -331,8 +329,9 @@ class CRN_Model:
         return balancing_reps
 
     def get_predictions(self, dataset):
-        logging.info("Performing one-step-ahed prediction.")
         dataset_size = dataset['current_covariates'].shape[0]
+        seq_length = dataset['current_covariates'].shape[1]
+        logging.info(f"Performing one-step-ahead prediction for {dataset_size} sequences of {seq_length} timesteps each")
 
         predictions = np.zeros(
             shape=(dataset_size, self.max_sequence_length, self.num_outputs))
@@ -406,7 +405,7 @@ class CRN_Model:
                                                        :]
 
         for t in range(0, projection_horizon):
-            print(t)
+            logging.info(f"Multi-step prediction: step {t+1}/{projection_horizon} ({(t+1)*5} minutes ahead)")
             predictions = self.get_predictions(current_dataset)
             for i in range(num_patient_points):
                 predicted_outputs[i, t] = predictions[i, t]
