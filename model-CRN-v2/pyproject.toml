@@ -1,0 +1,17 @@
+[project]
+name = "model-crn-v2"
+version = "0.1.0"
+description = "Counterfactual Recurrent Network for diabetes modeling"
+requires-python = ">=3.8,<3.13"
+dependencies = [
+    "numpy>=1.18.2",
+    "pandas>=1.0.4", 
+    "scipy>=1.1.0",
+    "scikit-learn>=0.22.2",
+    "tensorflow-macos>=2.0",
+    "matplotlib>=3.0",
+    "plotly>=5.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
