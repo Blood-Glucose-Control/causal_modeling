@@ -24,6 +24,8 @@ class CRNTrainer:
         
     def train(self):
         best_val_loss = float('inf')
+        patience = self.config.get('patience', 10)
+        patience_counter = 0
         
         for epoch in range(self.config['epochs']):
             self.model.train()
@@ -31,10 +33,6 @@ class CRNTrainer:
             # Lambda schedule for GRL (slowly increase adversarial power)
             p = epoch / self.config['epochs']
             alpha = 2. / (1. + np.exp(-10. * p)) - 1
-            
-            total_loss = 0
-            total_outcome_loss = 0
-            total_treat_loss = 0
             
             pbar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.config['epochs']}")
             
@@ -55,8 +53,6 @@ class CRNTrainer:
                 
                 # Treatment Loss (Adversarial)
                 # We want to predict the *immediate next* treatment based on history
-                # "future_treat" shape is [B, Horizon, TreatDim]. 
-                # We take the first step [:, 0, :] as the "next action" the patient took.
                 target_next_t = future_treat[:, 0, :] 
                 loss_treatment = self.mse_loss(pred_t, target_next_t)
                 
@@ -69,10 +65,6 @@ class CRNTrainer:
                 loss.backward()
                 self.optimizer.step()
                 
-                total_loss += loss.item()
-                total_outcome_loss += loss_outcome.item()
-                total_treat_loss += loss_treatment.item()
-                
                 pbar.set_postfix({'Outcome': loss_outcome.item(), 'Treat': loss_treatment.item()})
                 
             # Validation
@@ -82,6 +74,13 @@ class CRNTrainer:
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 self.save_checkpoint('best_model.pt')
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                print(f"EarlyStopping counter: {patience_counter} out of {patience}")
+                if patience_counter >= patience:
+                    print("Early stopping")
+                    break
                 
     def validate(self):
         self.model.eval()
@@ -99,6 +98,5 @@ class CRNTrainer:
         return total_loss / len(self.val_loader)
 
     def save_checkpoint(self, filename):
-        path = os.path.join(self.config['save_dir'], filename)
+        path = os.path.join(self.config.get('save_dir', '.'), filename)
         torch.save(self.model.state_dict(), path)
-
