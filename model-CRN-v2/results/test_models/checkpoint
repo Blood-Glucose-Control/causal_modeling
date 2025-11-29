@@ -1,2 +1,0 @@
-model_checkpoint_path: "diabetes_test_final.ckpt"
-all_model_checkpoint_paths: "diabetes_test_final.ckpt"
