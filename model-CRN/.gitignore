@@ -1,0 +1,9 @@
+# any pycache files
+*/__pycache__/
+
+# any .pt files
+*.pt
+
+
+# notes folder
+notes/
