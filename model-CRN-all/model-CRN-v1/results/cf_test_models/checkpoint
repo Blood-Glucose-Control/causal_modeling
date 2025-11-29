@@ -1,0 +1,2 @@
+model_checkpoint_path: "cf_test_encoder_final.ckpt"
+all_model_checkpoint_paths: "cf_test_encoder_final.ckpt"

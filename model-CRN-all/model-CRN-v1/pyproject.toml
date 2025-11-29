@@ -1,0 +1,24 @@
+[project]
+name = "crn-model"
+version = "0.1.0"
+description = "Counterfactual Recurrent Network for diabetes modeling"
+authors = [
+    {name = "Author", email = "author@example.com"}
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.7"
+dependencies = [
+    "numpy==1.18.2",
+    "pandas==1.0.4",
+    "scipy==1.1.0",
+    "scikit-learn==0.22.2",
+    "tensorflow-gpu==1.15.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = []
