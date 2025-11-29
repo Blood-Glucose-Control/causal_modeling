@@ -5,6 +5,10 @@ import matplotlib.pyplot as plt
 import argparse
 from copy import deepcopy
 import pandas as pd
+import sys
+
+# Add project root to path to find src module
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.models.crn_transformer import GlucoseTransformerCRN
 from src.data.dataset import GlucoseDataset
@@ -49,7 +53,7 @@ def main():
     
     print(f"Found {len(interventions)} interventions to analyze.")
     
-    os.makedirs('plots_ground_truth', exist_ok=True)
+    os.makedirs('analysis/plots', exist_ok=True)
     
     # Analyze first 5 valid interventions
     count = 0
@@ -160,7 +164,7 @@ def main():
         plt.legend()
         plt.grid(True, alpha=0.3)
         
-        save_path = f"plots_ground_truth/scenario_{i}.png"
+        save_path = f"analysis/plots/scenario_{i}.png"
         plt.savefig(save_path)
         print(f"Saved plot to {save_path}")
         plt.close()
@@ -172,3 +176,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
