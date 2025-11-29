@@ -13,24 +13,42 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.models.crn_transformer import GlucoseTransformerCRN
 from src.data.dataset import GlucoseDataset
 from src.data.generator import DiabetesAnalyzer
+from src.utils.data_utils import get_data_splits
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--checkpoint', type=str, default='checkpoints/best_model.pt')
     parser.add_argument('--num_interventions', type=int, default=50, help='Number of interventions to evaluate')
+    parser.add_argument('--config', type=str, default='config/best_params.yaml')
     args = parser.parse_args()
     
     # 1. Initialize Helper Classes
     print("Initializing Environment...")
-    dataset_helper = GlucoseDataset(mode='train', num_days=10) # For Scaler
+    # We use get_data_splits to get a valid dataset/scaler pair
+    # We only need the scaler and one dataset to access helper methods
+    train_ds, _, _, scaler = get_data_splits(num_days=10) 
+    dataset_helper = train_ds
+    
     analyzer = DiabetesAnalyzer(seed=2024) # New seed for robust eval
     
     # 2. Load Model
     print("Loading Model...")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
+    # Load params from config if available to match training
+    import yaml
+    if os.path.exists(args.config):
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+        model_keys = ['d_model', 'nhead', 'num_encoder_layers', 'num_decoder_layers', 
+                      'dim_feedforward', 'dropout', 'br_size']
+        model_params = {k: config[k] for k in model_keys if k in config}
+    else:
+        model_params = {}
+
     model = GlucoseTransformerCRN(
-        input_dim=9, treatment_dim=6, output_dim=1
+        input_dim=9, treatment_dim=6, output_dim=1,
+        **model_params
     ).to(device)
     
     if os.path.exists(args.checkpoint):
@@ -43,7 +61,6 @@ def main():
     # 3. Generate Data
     print("Generating Evaluation Data...")
     # Generate enough days to find requested number of interventions
-    # Approx 3 shots per day -> 20 days for 50 interventions
     base_df = analyzer.generate_patient_data(n_days=max(20, args.num_interventions // 2))
     interventions = analyzer.counterfactual_model.list_interventions(base_df)
     
@@ -121,9 +138,6 @@ def main():
             rmse_cf = np.sqrt(np.mean((pred_cf - gt_cf)**2))
             
             # D. Calculate Treatment Effect Error (ATE Error)
-            # True Effect = GT_CF - GT_Fact
-            # Pred Effect = Pred_CF - Pred_Fact
-            # This metric checks if we got the "Delta" right, even if baseline was off
             true_effect = np.mean(gt_cf - gt_factual)
             pred_effect = np.mean(pred_cf - pred_fact)
             effect_error = abs(pred_effect - true_effect)
@@ -157,10 +171,6 @@ def main():
     print("\nPerformance by Dose Factor:")
     summary = df_res.groupby('factor')[['rmse_cf', 'effect_error']].agg(['mean', 'std'])
     print(summary.round(2))
-    
-    print("\nInterpretation:")
-    print("- rmse_cf: Average absolute error in counterfactual trajectory (mg/dL).")
-    print("- effect_error: Average error in predicting the *change* caused by intervention (mg/dL).")
     
     # Save CSV
     os.makedirs('analysis/results', exist_ok=True)

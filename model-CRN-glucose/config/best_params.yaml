@@ -8,6 +8,6 @@ num_decoder_layers: 1
 dim_feedforward: 64
 dropout: 0.04840976017306718
 br_size: 32
-epochs: 20
+epochs: 100
+patience: 10
 save_dir: checkpoints
-
