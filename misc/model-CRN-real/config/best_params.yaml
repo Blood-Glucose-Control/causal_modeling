@@ -1,0 +1,13 @@
+batch_size: 128
+lr: 0.0008628884878603666
+lambda_treatment: 0.2261708704811939
+d_model: 64
+nhead: 2
+num_encoder_layers: 4
+num_decoder_layers: 1
+dim_feedforward: 64
+dropout: 0.04840976017306718
+br_size: 32
+epochs: 20
+save_dir: checkpoints
+
