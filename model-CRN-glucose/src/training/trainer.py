@@ -58,7 +58,7 @@ class CT_Trainer:
         self.device = get_device()
         self.model.to(self.device)
 
-        print(f"Ours (IPW+Cross-Attn) using device: {self.device}")
+        print(f"Causal Transformer w/ IPW+Cross-Attn using device: {self.device}")
 
         self.train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True)
         self.val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False)
@@ -151,14 +151,12 @@ class CT_Trainer:
                 })
 
             # Validation
-            val_loss = self.validate()
-            print(f"Epoch {epoch+1} - Val MSE: {val_loss:.4f} | "
-                  f"Train Outcome: {epoch_outcome_loss/len(self.train_loader):.4f} | "
-                  f"Train Propensity: {epoch_propensity_loss/len(self.train_loader):.4f} | "
-                  f"Train Balance: {epoch_balance_loss/len(self.train_loader):.4f}")
+            val_losses = self.validate()
+            print(f"Epoch {epoch+1} - Val Outcome: {val_losses['outcome']:.4f} | Val Propensity: {val_losses['propensity']:.4f} | Val Balance: {val_losses['balance']:.4f}")
+            print(f"           Train Outcome: {epoch_outcome_loss/len(self.train_loader):.4f} | Train Propensity: {epoch_propensity_loss/len(self.train_loader):.4f} | Train Balance: {epoch_balance_loss/len(self.train_loader):.4f}")
 
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            if val_losses['outcome'] < best_val_loss:
+                best_val_loss = val_losses['outcome']
                 self.save_checkpoint('best_model.pt')
                 patience_counter = 0
             else:
@@ -170,18 +168,37 @@ class CT_Trainer:
 
     def validate(self):
         self.model.eval()
-        total_loss = 0
+        total_outcome_loss = 0
+        total_propensity_loss = 0
+        total_balance_loss = 0
+
         with torch.no_grad():
             for batch in self.val_loader:
                 history = batch['encoder_inputs'].to(self.device)
                 future_treat = batch['future_treatments'].to(self.device)
                 future_y = batch['future_outcomes'].to(self.device)
 
+                # Outcome loss
                 outputs = self.model(history, future_treat)
-                loss = torch.mean(self.mse_loss(outputs['pred_outcomes'], future_y))
-                total_loss += loss.item()
+                loss_outcome = torch.mean(self.mse_loss(outputs['pred_outcomes'], future_y))
+                total_outcome_loss += loss_outcome.item()
 
-        return total_loss / len(self.val_loader)
+                # Propensity loss
+                propensity_scores = self.model.compute_propensity(history)
+                target_next_treatment = future_treat[:, 0, :]
+                loss_propensity = torch.mean(self.mse_loss(propensity_scores, target_next_treatment))
+                total_propensity_loss += loss_propensity.item()
+
+                # Balance loss
+                balanced_rep = outputs['balanced_rep']
+                loss_balance = compute_hsic_balance_loss(balanced_rep, target_next_treatment)
+                total_balance_loss += loss_balance.item()
+
+        return {
+            'outcome': total_outcome_loss / len(self.val_loader),
+            'propensity': total_propensity_loss / len(self.val_loader),
+            'balance': total_balance_loss / len(self.val_loader)
+        }
 
     def save_checkpoint(self, filename):
         path = os.path.join(self.config.get('save_dir', '.'), filename)
