@@ -3,7 +3,7 @@ import argparse
 import torch
 import yaml
 from src.utils.data_utils import get_data_splits
-from src.models.crn_transformer import GlucoseTransformerCRN
+from src.models.causal_transformer import GlucoseTransformerCRN
 from src.training.trainer import CRNTrainer
 
 def main():
@@ -22,7 +22,7 @@ def main():
             'batch_size': 64,
             'lr': 1e-3,
             'epochs': 20,
-            'lambda_treatment': 1.0,
+            'patience': 10,
             'save_dir': 'checkpoints',
             'd_model': 64,
             'nhead': 4,
