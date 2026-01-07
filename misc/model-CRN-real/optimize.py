@@ -5,7 +5,7 @@ import torch
 import yaml
 import numpy as np
 from src.utils.data_utils import get_data_splits
-from src.models.causal_transformer import GlucoseTransformerCRN
+from src.models.crn_transformer import GlucoseTransformerCRN
 from src.training.trainer import CRNTrainer
 
 def objective(trial):

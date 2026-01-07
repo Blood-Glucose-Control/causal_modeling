@@ -4,7 +4,7 @@ import torch
 import yaml
 from src.utils.data_utils import get_data_splits
 from src.models.causal_transformer import GlucoseTransformerCRN
-from src.training.trainer import CRNTrainer
+from src.training.trainer import CT_Trainer
 
 def main():
     parser = argparse.ArgumentParser()
@@ -56,7 +56,7 @@ def main():
     print(f"Model created with params: {model_params}")
     
     print("Starting Training...")
-    trainer = CRNTrainer(model, train_ds, val_ds, config)
+    trainer = CT_Trainer(model, train_ds, val_ds, config)
     trainer.train()
 
 if __name__ == "__main__":
