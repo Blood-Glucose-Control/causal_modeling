@@ -1,0 +1,14 @@
+# pycache
+__pycache__/
+
+# checkpoints
+checkpoints/
+
+# config
+config/
+
+# logs
+logs/
+
+# misc
+misc/

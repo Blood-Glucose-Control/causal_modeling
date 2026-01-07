@@ -1,12 +1,46 @@
-# Model CRN Glucose
+# Causal Transformer for Glucose Prediction
 
-This project implements a Counterfactual Recurrent Network (CRN) using a Transformer architecture to estimate counterfactual glucose outcomes. It adapts the original CRN concept (gradient reversal for balanced representations) to continuous glucose monitoring data.
+A three-subnetwork transformer architecture for counterfactual glucose prediction using Inverse Propensity Weighting (IPW).
 
-## Structure
+## Architecture Overview
 
-- `src/data/`: Data generation and PyTorch dataset wrappers.
-- `src/models/`: Transformer-based CRN implementation with Gradient Reversal.
-- `src/training/`: Training loops.
+### Three-Subnetwork Design
+
+```
+┌─────────────────────┐
+│ Propensity Network  │  Estimates P(treatment | history)
+└──────────┬──────────┘
+           │ (IPW weights)
+           ↓
+┌─────────────────────┐
+│  Encoder Network    │  Processes history → balanced representation
+│  + Pre-LN           │  Modern transformer with Pre-Layer Normalization
+│  + Relative PE      │  Learnable relative positional encoding
+└──────────┬──────────┘
+           │
+           ↓
+┌─────────────────────┐
+│  Decoder Network    │  Predicts outcomes from representation + treatments
+│  + Treatment Attn   │  Cross-attention over treatment sequences
+└─────────────────────┘
+```
+
+### Key Features
+
+1. **Inverse Propensity Weighting (IPW)**: Classical causal inference approach for treatment balancing
+   - More stable than Gradient Reversal
+   - Interpretable propensity scores
+   - Separate propensity network prevents gradient conflicts
+
+2. **Modern Transformer Components**:
+   - Pre-Layer Normalization (`norm_first=True`) for training stability
+   - Relative positional encoding for better time series modeling
+   - Treatment-aware cross-attention for context-dependent predictions
+
+3. **Separate Optimization**:
+   - Propensity network trained independently
+   - Main model uses IPW-weighted losses
+   - No gradient reversal tricks
 
 ## Setup
 
@@ -25,11 +59,28 @@ To train the model:
 uv run python main.py
 ```
 
-## Architecture
+Or with custom config:
 
-The model consists of:
-1.  **Encoder**: Processes 12 hours of history (Glucose, Insulin, Carbs, etc.).
-2.  **Balancing Head**: Compresses history into a representation invariant to the next treatment.
-3.  **Adversarial Head**: Tries to predict the next treatment from the representation (Gradient Reversal ensures the representation *fails* at this).
-4.  **Decoder**: Predicts the next 3 hours of glucose given the balanced representation and future treatments.
+```bash
+uv run python main.py --config config/my_config.yaml
+```
 
+## Loss Functions
+
+### Propensity Loss
+```python
+loss_propensity = MSE(P(T|X), T_actual)
+```
+
+### IPW-Weighted Outcome Loss
+```python
+weights = compute_ipw(propensity_scores, actual_treatments)
+loss_outcome = mean(weights * MSE(pred_Y, Y_actual))
+```
+
+## Citation
+
+This architecture combines insights from:
+- Classical causal inference (IPW, propensity scores)
+- Modern transformer architectures (Pre-LN, relative PE)
+- Counterfactual prediction literature (Causal Transformer, counterfactual Recurrent Network)
