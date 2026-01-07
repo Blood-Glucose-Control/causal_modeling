@@ -51,7 +51,7 @@ def compute_ipw_weights(propensity_scores, actual_treatments, epsilon=1e-6):
     return weights
 
 
-class CRNTrainer:
+class CT_Trainer:
     def __init__(self, model, train_dataset, val_dataset, config):
         self.model = model
         self.config = config
